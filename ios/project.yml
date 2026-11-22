@@ -1,0 +1,69 @@
+name: HereNow
+options:
+  bundleIdPrefix: app.herenow
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: zh-Hans
+packages:
+  HereNowCore:
+    path: Packages/HereNowCore
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  HereNow:
+    type: application
+    platform: iOS
+    sources:
+      - HereNow
+    dependencies:
+      - package: HereNowCore
+    info:
+      path: HereNow/Info.plist
+      properties:
+        CFBundleDisplayName: 此刻锚点
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        HereNowServerURL: http://127.0.0.1:8787
+        NSMicrophoneUsageDescription: 录一段家人的话，让患者在屏幕上点“听一听”时听到熟悉的声音。只在你按下录音时使用麦克风。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.herenow.HereNow
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  HereNowUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - HereNowUITests
+    dependencies:
+      - target: HereNow
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.herenow.HereNowUITests
+        TEST_TARGET_NAME: HereNow
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  HereNow:
+    build:
+      targets:
+        HereNow: all
+    test:
+      targets:
+        - HereNowUITests

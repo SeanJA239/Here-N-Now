@@ -1,0 +1,9 @@
+.DS_Store
+.amp/in/
+server/data/
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+ios/HereNow.xcodeproj/
+ios/HereNow/Info.plist
