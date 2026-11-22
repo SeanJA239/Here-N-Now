@@ -39,6 +39,8 @@ struct RootView: View {
                 }
             } else if let caregiver = model.caregiver {
                 CaregiverRootView(store: caregiver, ownDisplay: nil)
+            } else if let contributor = model.contributor {
+                ContributorHomeView(store: contributor)
             } else if model.wipedNotice != nil {
                 WipedNeutralView()
             } else {
@@ -78,7 +80,7 @@ struct WelcomeView: View {
     @State private var route: Route?
 
     enum Route: Identifiable {
-        case createFamily, pairDisplay, recover
+        case createFamily, pairDisplay, joinAsFamily, recover
         var id: Self { self }
     }
 
@@ -96,6 +98,7 @@ struct WelcomeView: View {
                     .padding(.top, 40)
                     choice("person.crop.circle.badge.plus", "我是照护者", "创建家庭，在这台设备上管理内容", .createFamily)
                     choice("ipad.landscape", "这台设备给患者看", "输入照护者手机上的配对码", .pairDisplay)
+                    choice("person.2.wave.2.fill", "我是家人：提供录音或照片", "输入主要照护者给你的邀请码", .joinAsFamily)
                     choice("key.fill", "用恢复码找回管理权", "换了手机或原设备丢失时使用", .recover)
                     Text("本应用不提供医疗、用药或安全监测功能，不能代替照护者的陪伴与判断。")
                         .font(.footnote)
@@ -111,6 +114,7 @@ struct WelcomeView: View {
             switch route {
             case .createFamily: CaregiverOnboardingView { self.route = nil }
             case .pairDisplay: DisplayPairingView { self.route = nil }
+            case .joinAsFamily: DisplayPairingView(role: .contributor) { self.route = nil }
             case .recover: RecoverView { self.route = nil }
             }
         }

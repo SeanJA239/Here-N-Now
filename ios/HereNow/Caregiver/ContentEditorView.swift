@@ -55,6 +55,8 @@ struct ContentEditorView: View {
                     Text("患者屏幕一次只显示一项：开始时间最早、仍在显示期内的安排。到“显示至”后自动移除，不会显示为“已来过”。")
                 }
 
+                RecurringSection(store: store)
+
                 Section {
                     NavigationLink { PlaceEditor(store: store) } label: {
                         LabeledContent("地点提示", value: snapshot.place.enabled ? snapshot.place.line : "未开启")
@@ -91,11 +93,17 @@ struct ContentEditorView: View {
                     if !AudioEnvironment.speechAvailable(language: snapshot.profile.languageCode) {
                         Text("这台手机没有可用的中文朗读语音；患者设备的情况见「设备」。").foregroundStyle(Theme.warn)
                     }
+                    NavigationLink { AutoPlayEditor(store: store) } label: {
+                        LabeledContent("自动问候", value: snapshot.autoPlay.enabled ? "已开启" : "关闭")
+                    }
+                    .accessibilityIdentifier("editor.autoplay")
                 } header: {
                     Text("声音")
                 } footer: {
                     Text("系统声音不模仿家人，也不会自动播放。患者设备没有可用语音时，按钮会隐藏，文字照常显示。")
                 }
+
+                ComfortSection(store: store)
 
                 Section {
                     NavigationLink("时段与夜间") { SegmentsEditor(store: store) }
@@ -179,6 +187,7 @@ struct EventEditor: View {
     @State private var untilChosen: Bool
     @State private var showFromChoice: ShowFrom = .sameDay
     @State private var confirmCancel = false
+    @State private var voice = false
 
     enum ShowFrom: String, CaseIterable { case now = "现在起", sameDay = "当天", dayBefore = "提前一天" }
 
@@ -199,6 +208,8 @@ struct EventEditor: View {
                     TextField("例如 小雨（女儿）", text: $event.personName)
                         .accessibilityIdentifier("event.person")
                         .onChange(of: event.personName) { _, _ in refreshSuggestion() }
+                    Button { voice = true } label: { Label("用语音填写", systemImage: "waveform.badge.mic") }
+                        .accessibilityIdentifier("event.voice")
                 }
                 Section {
                     DatePicker("开始", selection: $event.start)
@@ -299,6 +310,14 @@ struct EventEditor: View {
                 }
             }
             .onAppear(perform: inferShowFrom)
+            .sheet(isPresented: $voice) {
+                VoiceDraftSheet(zone: zone) { draft in
+                    if let name = draft.personName { event.personName = name }
+                    if let start = draft.start { event.start = start }
+                    event.lineIsSuggested = true
+                    refreshSuggestion()
+                }
+            }
         }
     }
 

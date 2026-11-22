@@ -9,6 +9,9 @@ final class PlaybackController: NSObject {
     private(set) var playingCardIdentity: String?
     private(set) var playingAudioIdentity: String?
     var onBrokenAsset: ((String) -> Void)?
+    /// Called when a sound starts and when it ends; `finished` is false when it was stopped or interrupted.
+    var onStart: ((AudioSource) -> Void)?
+    var onEnd: ((_ finished: Bool) -> Void)?
 
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
@@ -43,11 +46,18 @@ final class PlaybackController: NSObject {
         start(audio, card: card, assetURL: assetURL)
     }
 
+    /// Starts a sound without a tap (scheduled greeting, comfort item). Never interrupts a sound already playing.
+    func play(audio: AudioSource, card: Card, assetURL: (String) -> URL) {
+        guard !isPlaying else { return }
+        lastToggle = Date()
+        start(audio, card: card, assetURL: assetURL)
+    }
+
     func stop() {
         player?.stop()
         player = nil
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
-        finish()
+        finish(completed: false)
     }
 
     /// Stops a sound whose card is no longer the one on screen, e.g. after an event was cancelled or changed.
@@ -81,34 +91,37 @@ final class PlaybackController: NSObject {
         }
         playingCardIdentity = card.identity
         playingAudioIdentity = audio.identity
+        onStart?(audio)
     }
 
-    private func finish() {
+    private func finish(completed: Bool) {
+        let wasPlaying = playingAudioIdentity != nil
         playingCardIdentity = nil
         playingAudioIdentity = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if wasPlaying { onEnd?(completed) }
     }
 }
 
 extension PlaybackController: AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        MainActor.assumeIsolated { if self.player === player { self.player = nil; self.finish() } }
+        MainActor.assumeIsolated { if self.player === player { self.player = nil; self.finish(completed: true) } }
     }
 
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         MainActor.assumeIsolated {
             if let id = self.playingAudioIdentity, id.hasPrefix("rec:") { self.onBrokenAsset?(String(id.dropFirst(4))) }
             self.player = nil
-            self.finish()
+            self.finish(completed: false)
         }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        MainActor.assumeIsolated { if self.player == nil { self.finish() } }
+        MainActor.assumeIsolated { if self.player == nil { self.finish(completed: true) } }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        MainActor.assumeIsolated { if self.player == nil, self.playingAudioIdentity?.hasPrefix("tts:") == true { self.finish() } }
+        MainActor.assumeIsolated { if self.player == nil, self.playingAudioIdentity?.hasPrefix("tts:") == true { self.finish(completed: false) } }
     }
 }
 

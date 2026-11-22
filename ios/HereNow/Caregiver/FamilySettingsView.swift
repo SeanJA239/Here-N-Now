@@ -25,6 +25,11 @@ struct FamilySettingsView: View {
                     Text("首版不支持把管理权转交给他人。更换主要照护者时，请导出资料、删除家庭，再由新照护者重新建立。不要共享旧的恢复码。")
                 }
                 Section {
+                    NavigationLink { PlayLogView(store: store) } label: {
+                        LabeledContent("播放使用记录", value: store.workingSnapshot.playLog.enabled ? "开启" : "关闭")
+                    }
+                }
+                Section {
                     Button("准备导出文件") {
                         do { exportURL = try store.exportFile(); exportError = nil } catch { exportError = error.localizedDescription }
                     }

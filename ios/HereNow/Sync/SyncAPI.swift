@@ -11,7 +11,13 @@ protocol CaregiverSyncing: Sendable {
     func uploadAsset(token: String, sha256: String, data: Data, mime: String) async throws
     func publish(token: String, baseVersion: Int, publishID: String, snapshot: FamilySnapshot) async throws -> PublishOutcome
     func setControls(token: String, controls: DeviceControls) async throws
-    func createPairingCode(token: String) async throws -> PairingCode
+    /// Starts (or with nil stops) a comfort item on the patient devices.
+    func setComfort(token: String, itemID: String?) async throws
+    func createPairingCode(token: String, role: DeviceRole) async throws -> PairingCode
+    func resolveProposal(token: String, id: String, accept: Bool) async throws
+    func playLog(token: String) async throws -> PlayLogResponse
+    func clearPlayLog(token: String) async throws
+    func downloadAsset(token: String, sha256: String) async throws -> Data
     func resolveClaim(token: String, claimID: String, approve: Bool) async throws
     func registerOwnDisplay(token: String, deviceName: String) async throws -> (deviceID: String, token: String)
     func revokeDevice(token: String, deviceID: String) async throws
@@ -28,6 +34,48 @@ protocol DisplaySyncing: Sendable {
     func downloadAsset(token: String, sha256: String) async throws -> Data
     func sendReceipt(token: String, appliedVersion: Int, appliedControlsRev: Int, report: DeviceReport) async throws
     func confirmWipe(token: String) async throws
+    func appendPlayLog(token: String, entries: [PlayLogEntry], coverage: [CoverageSpan]) async throws
+}
+
+/// Family members who can suggest recordings, photos, and plans, but never publish or read the family's content.
+protocol ContributorSyncing: Sendable {
+    func contributorState(token: String) async throws -> ContributorState
+    func uploadAsset(token: String, sha256: String, data: Data, mime: String) async throws
+    func submitProposal(token: String, kind: Proposal.Kind, payload: ProposalPayload, assetRefs: [String]) async throws
+}
+
+enum DeviceRole: String, Codable, Sendable { case caregiver, display, contributor }
+
+struct ProposalPayload: Codable, Equatable, Sendable {
+    var speakerLabel: String?
+    var note: String?
+    var personName: String?
+    var line: String?
+    var start: Date?
+}
+
+struct Proposal: Codable, Equatable, Sendable, Identifiable {
+    enum Kind: String, Codable, Sendable { case recording, photo, event }
+    var id: String
+    var deviceName: String
+    var kind: Kind
+    var payload: ProposalPayload
+    var assetRefs: [String]
+    var createdAt: Double
+    var state: String
+}
+
+struct ContributorState: Decodable, Sendable {
+    var familyName: String
+    var deviceName: String
+    var proposals: [Proposal]
+}
+
+struct PlayLogResponse: Decodable, Sendable {
+    struct Entry: Decodable, Sendable { var deviceId: String; var at: Date; var kind: String; var trigger: String; var source: String }
+    struct Span: Decodable, Sendable { var deviceId: String; var start: Date; var end: Date }
+    var entries: [Entry]
+    var coverage: [Span]
 }
 
 struct NewCaregiverSession: Decodable, Sendable {
@@ -66,6 +114,7 @@ struct FamilyState: Codable, Equatable, Sendable {
         var claimId: String
         var deviceName: String
         var claimedAt: Double
+        var role: DeviceRole?
         var id: String { claimId }
     }
 
@@ -80,6 +129,7 @@ struct FamilyState: Codable, Equatable, Sendable {
     var selfDeviceId: String
     var devices: [Device]
     var pendingClaims: [Claim]
+    var proposals: [Proposal]?
     var serverTime: Double
 
     var activeDisplays: [Device] { devices.filter { $0.isDisplay && $0.isActive } }
@@ -120,18 +170,21 @@ enum PublishOutcome: Sendable {
 struct PairingCode: Decodable, Sendable {
     var code: String
     var expiresAt: Double
+    var role: DeviceRole?
 }
 
 struct PairingPreview: Decodable, Sendable {
     var familyName: String
     var initiatedBy: String
     var expiresAt: Double
+    var role: DeviceRole?
 }
 
 struct PairingClaim: Decodable, Sendable {
     var claimId: String
     var familyName: String
     var initiatedBy: String
+    var role: DeviceRole?
 }
 
 struct ClaimStatus: Decodable, Sendable {
@@ -140,6 +193,7 @@ struct ClaimStatus: Decodable, Sendable {
     var familyName: String?
     var deviceId: String?
     var deviceName: String?
+    var role: DeviceRole?
     var token: String?
 }
 
@@ -203,6 +257,7 @@ enum SyncError: Error, Equatable, LocalizedError {
         case "last_caregiver": "这是唯一的管理设备，不能直接退出"
         case "claim_expired": "配对请求已过期，请重新生成配对码"
         case "snapshot_too_large": "内容过大，无法发布"
+        case "contributor_only", "caregiver_only", "display_only": "这台设备没有这项权限"
         default: "同步服务拒绝了请求（\(code)）"
         }
     }

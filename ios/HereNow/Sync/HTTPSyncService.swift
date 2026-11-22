@@ -2,7 +2,7 @@ import Foundation
 import HereNowCore
 
 /// Self-hosted sync service client (see server/). Needs no Apple Developer entitlements.
-final class HTTPSyncService: CaregiverSyncing, DisplaySyncing, @unchecked Sendable {
+final class HTTPSyncService: CaregiverSyncing, DisplaySyncing, ContributorSyncing, @unchecked Sendable {
     let baseURL: URL
     private let session: URLSession
 
@@ -117,11 +117,51 @@ final class HTTPSyncService: CaregiverSyncing, DisplaySyncing, @unchecked Sendab
     }
 
     func setControls(token: String, controls: DeviceControls) async throws {
-        let _: Ignored = try await json("POST", "v1/family/controls", token: token, body: controls)
+        struct Body: Encodable { var soundPaused: Bool; var displayPaused: Bool }
+        let _: Ignored = try await json("POST", "v1/family/controls", token: token,
+                                        body: Body(soundPaused: controls.soundPaused, displayPaused: controls.displayPaused))
     }
 
-    func createPairingCode(token: String) async throws -> PairingCode {
-        try await json("POST", "v1/family/pairing-codes", token: token)
+    func setComfort(token: String, itemID: String?) async throws {
+        struct Body: Encodable {
+            var itemID: String?
+            enum CodingKeys: String, CodingKey { case comfortItemID }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                if let itemID { try c.encode(itemID, forKey: .comfortItemID) } else { try c.encodeNil(forKey: .comfortItemID) }
+            }
+        }
+        let _: Ignored = try await json("POST", "v1/family/controls", token: token, body: Body(itemID: itemID))
+    }
+
+    func createPairingCode(token: String, role: DeviceRole) async throws -> PairingCode {
+        try await json("POST", "v1/family/pairing-codes", token: token, body: ["role": role.rawValue])
+    }
+
+    func resolveProposal(token: String, id: String, accept: Bool) async throws {
+        let _: Ignored = try await json("POST", "v1/family/proposals/\(id)/\(accept ? "accept" : "decline")", token: token)
+    }
+
+    func playLog(token: String) async throws -> PlayLogResponse {
+        try await json("GET", "v1/family/playlog", token: token)
+    }
+
+    func clearPlayLog(token: String) async throws {
+        let _: Ignored = try await json("DELETE", "v1/family/playlog", token: token)
+    }
+
+    func contributorState(token: String) async throws -> ContributorState {
+        try await json("GET", "v1/contrib/me", token: token)
+    }
+
+    func submitProposal(token: String, kind: Proposal.Kind, payload: ProposalPayload, assetRefs: [String]) async throws {
+        struct Body: Encodable { var kind: Proposal.Kind; var payload: ProposalPayload; var assetRefs: [String] }
+        let _: Ignored = try await json("POST", "v1/contrib/proposals", token: token, body: Body(kind: kind, payload: payload, assetRefs: assetRefs))
+    }
+
+    func appendPlayLog(token: String, entries: [PlayLogEntry], coverage: [CoverageSpan]) async throws {
+        struct Body: Encodable { var entries: [PlayLogEntry]; var coverage: [CoverageSpan] }
+        let _: Ignored = try await json("POST", "v1/device/playlog", token: token, body: Body(entries: entries, coverage: coverage))
     }
 
     func resolveClaim(token: String, claimID: String, approve: Bool) async throws {

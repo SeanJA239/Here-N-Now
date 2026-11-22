@@ -20,6 +20,39 @@ struct AppliedState: Codable, Equatable {
     var clock = ClockGuard()
     var blockedVersion: Int?
     var lastProblem: String?
+    var autoPlayLedger = AutoPlayLedger()
+    var handledComfortRequestID: String?
+    var playLogBuffer: [PlayLogEntry] = []
+    var coverageBuffer: [CoverageSpan] = []
+    /// When this device started logging; coverage never reaches back before it.
+    var playLogEnabledAt: Date?
+
+    init() {}
+
+    /// Older local state files lack the P1 fields.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        snapshot = try c.decodeIfPresent(FamilySnapshot.self, forKey: .snapshot)
+        controls = try c.decode(DeviceControls.self, forKey: .controls)
+        controlsRev = try c.decode(Int.self, forKey: .controlsRev)
+        localControls = try c.decode(DeviceControls.self, forKey: .localControls)
+        rev = try c.decodeIfPresent(Int.self, forKey: .rev)
+        leaseExpiresAt = try c.decodeIfPresent(Date.self, forKey: .leaseExpiresAt)
+        appliedAt = try c.decodeIfPresent(Date.self, forKey: .appliedAt)
+        lastSyncAt = try c.decodeIfPresent(Date.self, forKey: .lastSyncAt)
+        missingAssets = try c.decode([String].self, forKey: .missingAssets)
+        brokenAssets = try c.decode([String].self, forKey: .brokenAssets)
+        retiredEventIDs = try c.decode([String].self, forKey: .retiredEventIDs)
+        clock = try c.decode(ClockGuard.self, forKey: .clock)
+        blockedVersion = try c.decodeIfPresent(Int.self, forKey: .blockedVersion)
+        lastProblem = try c.decodeIfPresent(String.self, forKey: .lastProblem)
+        autoPlayLedger = try c.decodeIfPresent(AutoPlayLedger.self, forKey: .autoPlayLedger) ?? AutoPlayLedger()
+        handledComfortRequestID = try c.decodeIfPresent(String.self, forKey: .handledComfortRequestID)
+        playLogBuffer = try c.decodeIfPresent([PlayLogEntry].self, forKey: .playLogBuffer) ?? []
+        coverageBuffer = try c.decodeIfPresent([CoverageSpan].self, forKey: .coverageBuffer) ?? []
+        playLogEnabledAt = try c.decodeIfPresent(Date.self, forKey: .playLogEnabledAt)
+    }
 }
 
 /// Runs the patient device: keeps the last complete version, applies new ones atomically, and reports what it applied.
@@ -31,6 +64,8 @@ final class DisplayEngine {
     private(set) var moment: Moment
     private(set) var online = false
     private(set) var connectionProblem: String?
+    /// A comfort item a caregiver started; it ends when its recording finishes or anyone stops it.
+    private(set) var activeComfort: ComfortItem?
     let playback = PlaybackController()
     var onWiped: (() -> Void)?
 
@@ -42,6 +77,9 @@ final class DisplayEngine {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var lastReceipt: (version: Int, controlsRev: Int, report: DeviceReport)?
     @ObservationIgnored private var lastPersist = Date.distantPast
+    @ObservationIgnored private var foregroundSince = Date()
+    @ObservationIgnored private var pendingTrigger: PlayLogEntry.Trigger = .button
+    @ObservationIgnored private var lastLogFlush = Date.distantPast
     @ObservationIgnored var layoutWidths = PatientLayout.reportedWidths(for: CGSize(width: 744, height: 1133), scale: .standard)
 
     init(credential: DisplayCredential, api: DisplaySyncing) {
@@ -51,6 +89,8 @@ final class DisplayEngine {
         state = loaded
         moment = MomentResolver.resolve(MomentInput(snapshot: nil, now: Date()))
         playback.onBrokenAsset = { [weak self] asset in self?.markBroken(asset) }
+        playback.onStart = { [weak self] audio in self?.logPlay(.started, audio: audio) }
+        playback.onEnd = { [weak self] finished in self?.playbackEnded(finished: finished) }
         tick()
     }
 
@@ -66,6 +106,12 @@ final class DisplayEngine {
             MainActor.assumeIsolated { self?.tick() }
         }
         let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.foregroundSince = Date() }
+        })
+        observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.closeCoverage() }
+        })
         for name in [UIApplication.significantTimeChangeNotification, .NSSystemTimeZoneDidChange,
                      UIApplication.didBecomeActiveNotification, AVAudioSession.routeChangeNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -102,6 +148,8 @@ final class DisplayEngine {
             }
         }
         recompute(now: now)
+        considerGreeting(now: now)
+        extendCoverage(now: now)
         persist()
     }
 
@@ -116,7 +164,8 @@ final class DisplayEngine {
             availableAssets: assets.all,
             brokenAssets: Set(state.brokenAssets),
             speechAvailable: AudioEnvironment.speechAvailable(language: language),
-            retiredEventIDs: Set(state.retiredEventIDs)
+            retiredEventIDs: Set(state.retiredEventIDs),
+            activeComfort: activeComfort
         ))
         if next != moment { moment = next }
         playback.contentChanged(to: next)
@@ -124,7 +173,106 @@ final class DisplayEngine {
 
     func toggleSound() {
         guard let audio = moment.audio, let card = moment.card else { return }
+        pendingTrigger = activeComfort == nil ? .button : .comfort
         playback.toggle(audio: audio, card: card, assetURL: assetURL)
+    }
+
+    // MARK: Greetings, comfort, and play log (P1)
+
+    private func considerGreeting(now: Date) {
+        guard let snapshot = state.snapshot, activeComfort == nil else { return }
+        let context = AutoPlayPlanner.Context(snapshot: snapshot, moment: moment, controls: effectiveControls, now: now,
+                                              foregroundSince: foregroundSince, isPlaying: playback.isPlaying,
+                                              clockSuspect: state.clock.suspect, ledger: state.autoPlayLedger)
+        guard let trigger = AutoPlayPlanner.trigger(context), let audio = moment.audio, let card = moment.card else { return }
+        state.autoPlayLedger.record(trigger, at: now)
+        persist(force: true)
+        pendingTrigger = .greeting
+        playback.play(audio: audio, card: card, assetURL: assetURL)
+    }
+
+    /// Starts comfort content only for a fresh request; a request that waited while the device was offline is ignored.
+    private func applyComfortCommand(serverTime: Date) {
+        let controls = state.controls
+        guard let requestID = controls.comfortRequestID, let itemID = controls.comfortItemID else {
+            if activeComfort != nil { endComfort() }
+            return
+        }
+        guard requestID != state.handledComfortRequestID else { return }
+        state.handledComfortRequestID = requestID
+        guard let requestedAt = controls.comfortRequestedAt, serverTime.timeIntervalSince(requestedAt) < 120,
+              let item = state.snapshot?.comfortItems.first(where: { $0.id == itemID && $0.enabled }),
+              !effectiveControls.displayPaused else { return }
+        playback.stop()
+        activeComfort = item
+        recompute()
+        guard let audio = moment.audio, let card = moment.card else {
+            endComfort()
+            return
+        }
+        pendingTrigger = .comfort
+        playback.play(audio: audio, card: card, assetURL: assetURL)
+    }
+
+    private func endComfort() {
+        activeComfort = nil
+        recompute()
+    }
+
+    private func playbackEnded(finished: Bool) {
+        logPlay(finished ? .finished : .stopped, audio: nil)
+        if activeComfort != nil { endComfort() }
+    }
+
+    private func logPlay(_ kind: PlayLogEntry.Kind, audio: AudioSource?) {
+        guard state.snapshot?.playLog.enabled == true else { return }
+        let source: String
+        switch audio {
+        case .recording?: source = "recording"
+        case .speech?: source = "speech"
+        case nil: source = state.playLogBuffer.last?.source ?? ""
+        }
+        state.playLogBuffer.append(PlayLogEntry(at: Date(), kind: kind, trigger: pendingTrigger, source: source))
+        if kind != .started { pendingTrigger = .button }
+        persist(force: true)
+    }
+
+    private func extendCoverage(now: Date) {
+        guard state.snapshot?.playLog.enabled == true else {
+            state.playLogBuffer = []
+            state.coverageBuffer = []
+            state.playLogEnabledAt = nil
+            return
+        }
+        let enabledAt = state.playLogEnabledAt ?? now
+        state.playLogEnabledAt = enabledAt
+        guard UIApplication.shared.applicationState == .active else { return }
+        let start = max(foregroundSince, enabledAt)
+        if let last = state.coverageBuffer.last, last.start == start {
+            state.coverageBuffer[state.coverageBuffer.count - 1].end = now
+        } else {
+            state.coverageBuffer.append(CoverageSpan(start: start, end: now))
+        }
+    }
+
+    private func closeCoverage() {
+        extendCoverage(now: Date())
+        persist(force: true)
+    }
+
+    private func flushPlayLog() async {
+        guard state.snapshot?.playLog.enabled == true, Date().timeIntervalSince(lastLogFlush) > 60,
+              !state.playLogBuffer.isEmpty || !state.coverageBuffer.isEmpty else { return }
+        let entries = state.playLogBuffer
+        let coverage = state.coverageBuffer
+        do {
+            try await api.appendPlayLog(token: credential.token, entries: entries, coverage: coverage)
+            lastLogFlush = Date()
+            state.playLogBuffer.removeFirst(min(entries.count, state.playLogBuffer.count))
+            // Keep the open span so it can keep growing; the server merges spans by start time.
+            state.coverageBuffer = state.coverageBuffer.suffix(1)
+            persist(force: true)
+        } catch {}
     }
 
     func setLocalControls(_ controls: DeviceControls) {
@@ -195,6 +343,7 @@ final class DisplayEngine {
         if let controls = response.controls, let rev = response.controlsRev, rev != state.controlsRev {
             state.controls = controls
             state.controlsRev = rev
+            applyComfortCommand(serverTime: Date(timeIntervalSince1970: response.serverTime / 1000))
         }
         if let version = response.version, version != state.version, let snapshot = response.snapshot {
             await apply(snapshot, version: version)
@@ -205,6 +354,7 @@ final class DisplayEngine {
         persist(force: true)
         recompute()
         await sendReceiptIfNeeded()
+        await flushPlayLog()
         return true
     }
 
@@ -225,13 +375,13 @@ final class DisplayEngine {
             }
         }
         let referenced = Set(snapshot.assetRefs)
-        let eventIDs = Set(snapshot.events.map(\.id))
+        let eventIDs = Set(snapshot.events.map(\.id) + snapshot.recurring.map(\.id))
         state.snapshot = snapshot
         if state.version != version { state.appliedAt = Date() }
         state.version = version
         state.missingAssets = missing
         state.brokenAssets = state.brokenAssets.filter(referenced.contains)
-        state.retiredEventIDs = state.retiredEventIDs.filter(eventIDs.contains)
+        state.retiredEventIDs = state.retiredEventIDs.filter { eventIDs.contains(String($0.split(separator: "@").first ?? "")) }
         state.blockedVersion = nil
         state.lastProblem = missing.isEmpty ? nil : "有 \(missing.count) 个照片或录音未下载，已先用文字显示"
         assets.removeAll(except: referenced)

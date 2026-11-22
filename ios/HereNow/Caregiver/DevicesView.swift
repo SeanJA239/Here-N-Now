@@ -6,6 +6,7 @@ struct DevicesView: View {
     @Bindable var store: CaregiverStore
     var ownDisplay: DisplayEngine?
     @State private var pairing = false
+    @State private var invitingFamily = false
     @State private var revoking: FamilyState.Device?
     @State private var settingUpHere = false
 
@@ -35,8 +36,28 @@ struct DevicesView: View {
                 if let ownDisplay {
                     DisplayStatusSections(engine: ownDisplay)
                 }
+                Section {
+                    ForEach(family?.devices.filter { $0.role == "contributor" } ?? []) { device in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(device.name)
+                                Text(device.isActive ? "可以提交录音、照片和安排建议" : "已撤销").font(.footnote).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if device.isActive {
+                                Button("撤销", role: .destructive) { revoking = device }.buttonStyle(.borderless)
+                            }
+                        }
+                    }
+                    Button { invitingFamily = true } label: { Label("邀请家人提供录音或照片", systemImage: "person.badge.plus") }
+                        .accessibilityIdentifier("devices.inviteFamily")
+                } header: {
+                    Text("家人")
+                } footer: {
+                    Text("家人只能提交建议，看不到家庭内容，也不能发布；你决定是否使用。")
+                }
                 Section("管理设备") {
-                    ForEach(family?.devices.filter { !$0.isDisplay } ?? []) { device in
+                    ForEach(family?.devices.filter { $0.role == "caregiver" } ?? []) { device in
                         VStack(alignment: .leading) {
                             Text(device.name + (device.id == family?.selfDeviceId ? "（本机）" : ""))
                             Text(device.isActive ? "可以管理内容" : "管理权已撤销").font(.footnote).foregroundStyle(.secondary)
@@ -47,6 +68,7 @@ struct DevicesView: View {
             .navigationTitle("设备")
             .refreshable { await store.refreshNow() }
             .sheet(isPresented: $pairing) { PairDeviceSheet(store: store) }
+            .sheet(isPresented: $invitingFamily) { PairDeviceSheet(store: store, role: .contributor) }
             .fullScreenCover(isPresented: $settingUpHere) {
                 PINSetupView {
                     settingUpHere = false
@@ -99,7 +121,7 @@ struct ClaimRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("「\(claim.deviceName)」请求加入「\(store.credential.familyName)」").font(.headline)
+            Text(claim.role == .contributor ? "家人「\(claim.deviceName)」请求成为提交者" : "「\(claim.deviceName)」请求加入「\(store.credential.familyName)」").font(.headline)
                 .accessibilityIdentifier("claim.title")
             Text("请确认这是你正在设置的设备。").font(.footnote).foregroundStyle(.secondary)
             HStack {
@@ -116,6 +138,7 @@ struct ClaimRow: View {
 struct PairDeviceSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var store: CaregiverStore
+    var role: DeviceRole = .display
     @State private var code: PairingCode?
     @State private var startedDevices: Set<String> = []
 
@@ -133,30 +156,30 @@ struct PairDeviceSheet: View {
                             Text(remaining > 0 ? "\(remaining / 60) 分 \(remaining % 60) 秒后失效，只能使用一次" : "已失效，请重新生成")
                                 .foregroundStyle(remaining > 0 ? Color.secondary : Theme.bad)
                         }
-                        Button("重新生成") { Task { self.code = await store.createPairingCode() } }
+                        Button("重新生成") { Task { self.code = await store.createPairingCode(role: role) } }
                     } else {
                         ProgressView()
                     }
                     if let error = store.actionError { Text(error).foregroundStyle(Theme.bad) }
                 } footer: {
-                    Text("在患者设备上打开此刻锚点，选择“这台设备给患者看”，输入这个配对码。")
+                    Text(role == .contributor ? "请家人在自己的手机上打开此刻锚点，选择“我是家人：提供录音或照片”，输入这个邀请码。" : "在患者设备上打开此刻锚点，选择“这台设备给患者看”，输入这个配对码。")
                 }
                 if let claims = store.family?.pendingClaims, !claims.isEmpty {
                     Section("等待确认") { ForEach(claims) { ClaimRow(store: store, claim: $0) } }
                 }
-                if let newDevice = store.family?.activeDisplays.first(where: { !startedDevices.contains($0.id) }) {
+                if let newDevice = store.family?.devices.first(where: { $0.isActive && $0.role == role.rawValue && !startedDevices.contains($0.id) }) {
                     Section {
                         Label("「\(newDevice.name)」已配对", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.ok)
                         Button("完成") { dismiss() }.accessibilityIdentifier("pairing.done")
                     }
                 }
             }
-            .navigationTitle("配对患者设备")
+            .navigationTitle(role == .contributor ? "邀请家人" : "配对患者设备")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
             .task {
-                startedDevices = Set(store.family?.activeDisplays.map(\.id) ?? [])
-                code = await store.createPairingCode()
+                startedDevices = Set(store.family?.devices.map(\.id) ?? [])
+                code = await store.createPairingCode(role: role)
             }
         }
     }

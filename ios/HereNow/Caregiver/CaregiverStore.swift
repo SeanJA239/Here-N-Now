@@ -245,14 +245,47 @@ final class CaregiverStore {
         await run { try await self.api.setControls(token: self.credential.token, controls: controls) }
     }
 
-    func createPairingCode() async -> PairingCode? {
+    func createPairingCode(role: DeviceRole = .display) async -> PairingCode? {
         actionError = nil
         do {
-            return try await api.createPairingCode(token: credential.token)
+            return try await api.createPairingCode(token: credential.token, role: role)
         } catch {
             actionError = (error as? LocalizedError)?.errorDescription
             return nil
         }
+    }
+
+    func startComfort(_ itemID: String?) async {
+        await run { try await self.api.setComfort(token: self.credential.token, itemID: itemID) }
+    }
+
+    var pendingProposals: [Proposal] { family?.proposals ?? [] }
+
+    /// Downloads a family member's photo or recording into this phone's store so it can be used in a draft.
+    func fetchProposalAssets(_ proposal: Proposal) async -> Bool {
+        for sha in proposal.assetRefs where !assets.contains(sha) {
+            guard let data = try? await api.downloadAsset(token: credential.token, sha256: sha),
+                  AssetStore.sha256(data) == sha, (try? assets.store(data)) != nil else {
+                actionError = "无法下载家人提交的素材，请稍后重试"
+                return false
+            }
+        }
+        return true
+    }
+
+    func resolve(proposal: Proposal, accept: Bool) async {
+        await run { try await self.api.resolveProposal(token: self.credential.token, id: proposal.id, accept: accept) }
+    }
+
+    func loadPlayLog() async -> PlayLogResponse? {
+        do { return try await api.playLog(token: credential.token) } catch {
+            actionError = (error as? LocalizedError)?.errorDescription
+            return nil
+        }
+    }
+
+    func clearPlayLog() async {
+        await run { try await self.api.clearPlayLog(token: self.credential.token) }
     }
 
     func resolve(claim: FamilyState.Claim, approve: Bool) async {

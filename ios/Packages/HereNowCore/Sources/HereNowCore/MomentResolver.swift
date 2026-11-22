@@ -31,6 +31,7 @@ public struct Card: Equatable, Sendable {
         case event(id: String)
         case place
         case neutralLine
+        case comfort(id: String)
     }
 
     public var kind: Kind
@@ -72,6 +73,8 @@ public struct MomentInput: Sendable {
     public var speechAvailable: Bool
     /// Events this device has already seen expire; they never come back even if the clock jumps backwards.
     public var retiredEventIDs: Set<String>
+    /// A comfort item a caregiver started by hand; shown instead of the usual card until it ends.
+    public var activeComfort: ComfortItem?
 
     public init(
         snapshot: FamilySnapshot?,
@@ -82,7 +85,8 @@ public struct MomentInput: Sendable {
         availableAssets: Set<String> = [],
         brokenAssets: Set<String> = [],
         speechAvailable: Bool = true,
-        retiredEventIDs: Set<String> = []
+        retiredEventIDs: Set<String> = [],
+        activeComfort: ComfortItem? = nil
     ) {
         self.snapshot = snapshot
         self.controls = controls
@@ -93,6 +97,7 @@ public struct MomentInput: Sendable {
         self.brokenAssets = brokenAssets
         self.speechAvailable = speechAvailable
         self.retiredEventIDs = retiredEventIDs
+        self.activeComfort = activeComfort
     }
 }
 
@@ -123,7 +128,12 @@ public enum MomentResolver {
 
         var card: Card?
         var recording: Recording?
-        if snapshot.display.focus == .automatic, !input.clockSuspect,
+        if let comfort = input.activeComfort {
+            let fallback = comfort.recording.map { "\($0.speakerLabel)的声音" } ?? ""
+            card = Card(kind: .comfort(id: comfort.id), line: comfort.line.isEmpty ? fallback : comfort.line,
+                        photoAssetID: hidePhoto ? nil : usable(comfort.photoAssetID), identity: "comfort:\(comfort.id)")
+            recording = comfort.recording
+        } else if snapshot.display.focus == .automatic, !input.clockSuspect,
            let event = currentEvent(in: snapshot, now: input.now, retired: input.retiredEventIDs) {
             card = Card(kind: .event(id: event.id), line: event.line,
                         photoAssetID: hidePhoto ? nil : usable(event.photoAssetID),
@@ -143,7 +153,7 @@ public enum MomentResolver {
         if let card, !input.controls.soundPaused {
             if let recording, usable(recording.assetID) != nil {
                 audio = .recording(assetID: recording.assetID, speakerLabel: recording.speakerLabel)
-            } else if snapshot.voice.systemSpeechFallback, input.speechAvailable {
+            } else if input.activeComfort == nil, snapshot.voice.systemSpeechFallback, input.speechAvailable {
                 audio = .speech(text: spokenText(card.line, snapshot: snapshot), languageCode: snapshot.profile.languageCode)
             }
         }
@@ -162,7 +172,7 @@ public enum MomentResolver {
 
     /// The single event the patient should see: valid, not cancelled, inside its display window, earliest start first.
     public static func currentEvent(in snapshot: FamilySnapshot, now: Date, retired: Set<String> = []) -> ScheduleEvent? {
-        let live = snapshot.events.filter {
+        let live = snapshot.effectiveEvents(around: now).filter {
             !$0.isCancelled && !retired.contains($0.id) && $0.showFrom <= now && now < $0.showUntil
         }
         guard let earliest = live.map(\.start).min() else { return nil }
@@ -172,7 +182,7 @@ public enum MomentResolver {
 
     /// Event IDs whose display window has closed at `now`; the caller persists them so a clock jump cannot revive them.
     public static func expiredEventIDs(in snapshot: FamilySnapshot, now: Date) -> Set<String> {
-        Set(snapshot.events.filter { now >= $0.showUntil }.map(\.id))
+        Set(snapshot.effectiveEvents(around: now).filter { now >= $0.showUntil }.map(\.id))
     }
 
     public static func placeIsValid(_ place: PlacePrompt, now: Date, clockSuspect: Bool) -> Bool {

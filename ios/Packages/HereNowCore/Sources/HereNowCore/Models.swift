@@ -10,6 +10,14 @@ public struct FamilySnapshot: Codable, Equatable, Sendable {
     public var voice: VoicePreferences
     public var place: PlacePrompt
     public var events: [ScheduleEvent]
+    /// Weekly plans, expanded into single occurrences in the patient's time zone (P1).
+    public var recurring: [RecurringEvent]
+    /// Caregiver-chosen soothing recordings and photos, started by hand (P1).
+    public var comfortItems: [ComfortItem]
+    /// Scheduled greetings, off by default (P1).
+    public var autoPlay: AutoPlaySettings
+    /// Optional playback log, off by default (P1).
+    public var playLog: PlayLogSettings
     /// Content-addressed assets (SHA-256) the version references; the server refuses a version whose assets are missing.
     public var assetRefs: [String]
 
@@ -30,7 +38,29 @@ public struct FamilySnapshot: Codable, Equatable, Sendable {
         self.voice = voice
         self.place = place
         self.events = events
+        self.recurring = []
+        self.comfortItems = []
+        self.autoPlay = AutoPlaySettings()
+        self.playLog = PlayLogSettings()
         self.assetRefs = []
+    }
+
+    /// Versions published before P1 lack the newer sections; they decode with everything off.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        profile = try c.decode(PatientProfile.self, forKey: .profile)
+        segments = try c.decode([DaySegment].self, forKey: .segments)
+        night = try c.decode(NightSettings.self, forKey: .night)
+        display = try c.decode(DisplayPreferences.self, forKey: .display)
+        voice = try c.decode(VoicePreferences.self, forKey: .voice)
+        place = try c.decode(PlacePrompt.self, forKey: .place)
+        events = try c.decode([ScheduleEvent].self, forKey: .events)
+        recurring = try c.decodeIfPresent([RecurringEvent].self, forKey: .recurring) ?? []
+        comfortItems = try c.decodeIfPresent([ComfortItem].self, forKey: .comfortItems) ?? []
+        autoPlay = try c.decodeIfPresent(AutoPlaySettings.self, forKey: .autoPlay) ?? AutoPlaySettings()
+        playLog = try c.decodeIfPresent(PlayLogSettings.self, forKey: .playLog) ?? PlayLogSettings()
+        assetRefs = try c.decodeIfPresent([String].self, forKey: .assetRefs) ?? []
     }
 
     public var timeZone: TimeZone { TimeZone(identifier: profile.timeZoneID) ?? .current }
@@ -44,6 +74,14 @@ public struct FamilySnapshot: Codable, Equatable, Sendable {
         for event in events where !event.isCancelled {
             add(event.photoAssetID)
             add(event.recording?.assetID)
+        }
+        for plan in recurring where !plan.isCancelled {
+            add(plan.photoAssetID)
+            add(plan.recording?.assetID)
+        }
+        for item in comfortItems {
+            add(item.photoAssetID)
+            add(item.recording?.assetID)
         }
         return refs
     }
@@ -273,10 +311,18 @@ public struct ScheduleEvent: Codable, Equatable, Sendable, Identifiable {
 public struct DeviceControls: Codable, Equatable, Sendable {
     public var soundPaused: Bool
     public var displayPaused: Bool
+    /// A caregiver started this comfort item by hand. Each start has a new request ID so a repeat is a new start.
+    public var comfortItemID: String?
+    public var comfortRequestID: String?
+    public var comfortRequestedAt: Date?
 
-    public init(soundPaused: Bool = false, displayPaused: Bool = false) {
+    public init(soundPaused: Bool = false, displayPaused: Bool = false, comfortItemID: String? = nil,
+                comfortRequestID: String? = nil, comfortRequestedAt: Date? = nil) {
         self.soundPaused = soundPaused
         self.displayPaused = displayPaused
+        self.comfortItemID = comfortItemID
+        self.comfortRequestID = comfortRequestID
+        self.comfortRequestedAt = comfortRequestedAt
     }
 }
 

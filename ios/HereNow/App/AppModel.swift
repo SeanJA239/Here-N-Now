@@ -10,6 +10,7 @@ import UIKit
 final class AppModel {
     private(set) var caregiver: CaregiverStore?
     private(set) var display: DisplayEngine?
+    private(set) var contributor: ContributorStore?
     /// The caregiver passed the PIN or device check on the patient device.
     var managementUnlocked = false
     /// After a remote wipe the device shows a neutral time page instead of a setup form.
@@ -22,6 +23,7 @@ final class AppModel {
         Installation.prepare()
         if let credential = Keychain.load(CaregiverCredential.self, key: "caregiver") { attachCaregiver(credential) }
         if let credential = Keychain.load(DisplayCredential.self, key: "display") { attachDisplay(credential) }
+        if let credential = Keychain.load(ContributorCredential.self, key: "contributor") { attachContributor(credential) }
         wipedNotice = UserDefaults.standard.string(forKey: "wipedNotice")
         if let token = Keychain.load(String.self, key: "wipeConfirmPending") {
             Task { [api] in await DisplayEngine.confirmWipe(token: token, api: api) }
@@ -52,6 +54,16 @@ final class AppModel {
         display = engine
         clearWipedNotice()
         engine.start()
+    }
+
+    func attachContributor(_ credential: ContributorCredential) {
+        Keychain.save(credential, key: "contributor")
+        let store = ContributorStore(credential: credential, api: api)
+        store.onRevoked = { [weak self] in
+            self?.contributor = nil
+            self?.signOutNotice = "这台手机已不再是「\(credential.familyName)」的提交者"
+        }
+        contributor = store
     }
 
     func clearWipedNotice() {

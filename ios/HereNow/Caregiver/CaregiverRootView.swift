@@ -79,8 +79,10 @@ struct DashboardView: View {
                             .onTapGesture { openTab(1) }
                     }
                     SetupChecklist(store: store, openTab: openTab)
+                    ProposalsCard(store: store)
                     deliveryTile
                     previewCard
+                    ComfortControlCard(store: store)
                     ControlsCard(store: store)
                     devicesSummary
                     upcoming

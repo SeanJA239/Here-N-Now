@@ -29,6 +29,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         HereNowServerURL: http://127.0.0.1:8787
+        NSSpeechRecognitionUsageDescription: 把你说的一句安排整理成草稿，只在本机识别，结果必须由你核对后才会保存。
         NSMicrophoneUsageDescription: 录一段家人的话，让患者在屏幕上点“听一听”时听到熟悉的声音。只在你按下录音时使用麦克风。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

@@ -15,7 +15,8 @@ const FAILED_PAIRING_LIMIT = 10;
 const FAILED_PAIRING_WINDOW_MS = 10 * 60 * 1000;
 const MAX_WAIT_SECONDS = 25;
 
-type Role = "caregiver" | "display";
+type Role = "caregiver" | "display" | "contributor";
+const PLAYLOG_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 type WipeState = "none" | "pending" | "confirmed";
 
 interface DeviceRow {
@@ -57,6 +58,7 @@ interface PairingRow {
   created_at: number;
   expires_at: number;
   state: "open" | "claimed" | "approved" | "rejected";
+  role: Role;
   claim_id: string | null;
   claim_secret_hash: string | null;
   claim_installation_id: string | null;
@@ -65,6 +67,19 @@ interface PairingRow {
   device_id: string | null;
   issued_token: string | null;
   approved_at: number | null;
+}
+
+interface ProposalRow {
+  id: string;
+  family_id: string;
+  device_id: string;
+  device_name: string;
+  kind: "recording" | "photo" | "event";
+  payload: string;
+  asset_refs: string;
+  created_at: number;
+  state: "pending" | "accepted" | "declined";
+  resolved_at: number | null;
 }
 
 export class HttpError extends Error {
@@ -112,6 +127,9 @@ function reportFacts(report: string | null) {
     return report;
   }
 }
+
+/** ISO 8601 without milliseconds, which Foundation's default ISO 8601 decoder accepts. */
+const isoSeconds = (ms: number) => new Date(Math.floor(ms / 1000) * 1000).toISOString().replace(".000Z", "Z");
 
 export const normalizeCode = (value: unknown) =>
   typeof value === "string" ? value.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
@@ -173,7 +191,24 @@ export class HereNowServer {
         family_id TEXT NOT NULL, publish_id TEXT NOT NULL, version INTEGER NOT NULL,
         PRIMARY KEY (family_id, publish_id)
       );
+      CREATE TABLE IF NOT EXISTS proposals (
+        id TEXT PRIMARY KEY, family_id TEXT NOT NULL REFERENCES families(id), device_id TEXT NOT NULL,
+        device_name TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL, asset_refs TEXT NOT NULL,
+        created_at INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending', resolved_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS play_log (
+        family_id TEXT NOT NULL, device_id TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL,
+        trigger TEXT NOT NULL, source TEXT NOT NULL, PRIMARY KEY (device_id, at, kind)
+      );
+      CREATE TABLE IF NOT EXISTS play_coverage (
+        family_id TEXT NOT NULL, device_id TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL,
+        PRIMARY KEY (device_id, start)
+      );
     `);
+    const pairingColumns = this.db.prepare("PRAGMA table_info(pairing_codes)").all() as { name: string }[];
+    if (!pairingColumns.some((c) => c.name === "role")) {
+      this.db.exec("ALTER TABLE pairing_codes ADD COLUMN role TEXT NOT NULL DEFAULT 'display'");
+    }
   }
 
   close() {
@@ -299,7 +334,11 @@ export class HereNowServer {
         deviceName: c.claim_device_name,
         claimedAt: c.claimed_at,
         code: c.code,
+        role: c.role,
       })),
+      proposals: (this.db
+        .prepare("SELECT * FROM proposals WHERE family_id = ? AND state = 'pending' ORDER BY created_at")
+        .all(family.id) as unknown as ProposalRow[]).map((p) => this.proposalView(p)),
       serverTime: this.now(),
     };
   }
@@ -422,7 +461,12 @@ export class HereNowServer {
     });
   }
 
-  private collectAssets(familyId: string, keep: Set<string>) {
+  private collectAssets(familyId: string, keepPublished: Set<string>) {
+    const keep = new Set(keepPublished);
+    const pending = this.db
+      .prepare("SELECT asset_refs FROM proposals WHERE family_id = ? AND state = 'pending'")
+      .all(familyId) as { asset_refs: string }[];
+    for (const p of pending) for (const sha of JSON.parse(p.asset_refs) as string[]) keep.add(sha);
     const rows = this.db.prepare("SELECT sha256, created_at FROM assets WHERE family_id = ?").all(familyId) as {
       sha256: string;
       created_at: number;
@@ -435,7 +479,8 @@ export class HereNowServer {
   }
 
   putAsset(req: IncomingMessage, sha: string, bytes: Buffer) {
-    const { family } = this.requireCaregiver(req);
+    const { device, family } = this.authenticate(req);
+    if (device.role === "display") throw new HttpError(403, "caregiver_only");
     if (!/^[0-9a-f]{64}$/.test(sha)) throw new HttpError(400, "invalid_asset_id");
     if (bytes.length === 0 || bytes.length > MAX_ASSET_BYTES) throw new HttpError(413, "asset_size");
     if (sha256(bytes) !== sha) throw new HttpError(400, "asset_hash_mismatch");
@@ -454,7 +499,13 @@ export class HereNowServer {
   }
 
   getAsset(req: IncomingMessage, sha: string) {
-    const { family } = this.authenticate(req);
+    const { device, family } = this.authenticate(req);
+    if (device.role === "contributor") {
+      const own = this.db
+        .prepare("SELECT asset_refs FROM proposals WHERE device_id = ?")
+        .all(device.id) as { asset_refs: string }[];
+      if (!own.some((p) => (JSON.parse(p.asset_refs) as string[]).includes(sha))) throw new HttpError(404, "asset_not_found");
+    }
     const row = this.db.prepare("SELECT * FROM assets WHERE family_id = ? AND sha256 = ?").get(family.id, sha) as
       | { mime: string }
       | undefined;
@@ -465,11 +516,23 @@ export class HereNowServer {
 
   setControls(req: IncomingMessage, body: Record<string, unknown>) {
     const { family } = this.requireCaregiver(req);
-    const current = JSON.parse(family.controls) as Record<string, boolean>;
-    const next = {
+    const current = JSON.parse(family.controls) as Record<string, unknown>;
+    const next: Record<string, unknown> = {
       soundPaused: typeof body.soundPaused === "boolean" ? body.soundPaused : current.soundPaused,
       displayPaused: typeof body.displayPaused === "boolean" ? body.displayPaused : current.displayPaused,
+      comfortItemID: current.comfortItemID ?? null,
+      comfortRequestID: current.comfortRequestID ?? null,
+      comfortRequestedAt: current.comfortRequestedAt ?? null,
     };
+    // Starting comfort content is a one-off command; the server stamps its own time so a display that was
+    // offline can tell the request is stale and must not start playing late.
+    if ("comfortItemID" in body) {
+      const item = body.comfortItemID;
+      if (item !== null && (typeof item !== "string" || item.length > 80)) throw new HttpError(400, "invalid_field", { field: "comfortItemID" });
+      next.comfortItemID = item;
+      next.comfortRequestID = item === null ? null : newId();
+      next.comfortRequestedAt = item === null ? null : isoSeconds(this.now());
+    }
     return this.tx(() => {
       this.db
         .prepare("UPDATE families SET controls = ?, controls_rev = controls_rev + 1 WHERE id = ?")
@@ -479,22 +542,23 @@ export class HereNowServer {
     });
   }
 
-  createPairingCode(req: IncomingMessage) {
+  createPairingCode(req: IncomingMessage, body: Record<string, unknown> = {}) {
     const { device, family } = this.requireCaregiver(req);
+    const role: Role = body.role === "contributor" ? "contributor" : "display";
     const code = normalizeCode(randomCode(2, 4));
     const expiresAt = this.now() + PAIRING_TTL_MS;
     this.db
       .prepare(
-        "INSERT INTO pairing_codes (code, family_id, created_by, created_at, expires_at, state) VALUES (?, ?, ?, ?, ?, 'open')",
+        "INSERT INTO pairing_codes (code, family_id, created_by, created_at, expires_at, state, role) VALUES (?, ?, ?, ?, ?, 'open', ?)",
       )
-      .run(code, family.id, device.name, this.now(), expiresAt);
-    return { code: `${code.slice(0, 4)}-${code.slice(4)}`, expiresAt };
+      .run(code, family.id, device.name, this.now(), expiresAt, role);
+    return { code: `${code.slice(0, 4)}-${code.slice(4)}`, expiresAt, role };
   }
 
   previewPairing(query: URLSearchParams, client: string) {
     const { row, family } = this.lookupCode(query.get("code"), client);
     if (row.state !== "open") throw new HttpError(409, "pairing_code_consumed");
-    return { familyName: family.name, initiatedBy: row.created_by, expiresAt: row.expires_at };
+    return { familyName: family.name, initiatedBy: row.created_by, expiresAt: row.expires_at, role: row.role };
   }
 
   claimPairing(body: Record<string, unknown>, client: string) {
@@ -508,7 +572,7 @@ export class HereNowServer {
         row.claim_installation_id === installationId &&
         row.claim_secret_hash !== null &&
         safeEqualHex(row.claim_secret_hash, sha256(claimSecret));
-      if (sameClaim) return { claimId: row.claim_id, familyName: family.name, initiatedBy: row.created_by };
+      if (sameClaim) return { claimId: row.claim_id, familyName: family.name, initiatedBy: row.created_by, role: row.role };
       throw new HttpError(409, "pairing_code_consumed");
     }
     const claimId = newId();
@@ -520,7 +584,7 @@ export class HereNowServer {
         .run(claimId, sha256(claimSecret), installationId, deviceName, this.now(), row.code);
       this.bump(family.id);
     });
-    return { claimId, familyName: family.name, initiatedBy: row.created_by };
+    return { claimId, familyName: family.name, initiatedBy: row.created_by, role: row.role };
   }
 
   claimStatus(claimId: string, query: URLSearchParams) {
@@ -545,6 +609,7 @@ export class HereNowServer {
       familyName: family.name,
       deviceId: device.id,
       deviceName: device.name,
+      role: device.role,
       token: canRedeliver ? row.issued_token : null,
     };
   }
@@ -566,10 +631,8 @@ export class HereNowServer {
       }
       const token = newToken();
       const existing = this.db
-        .prepare(
-          "SELECT * FROM devices WHERE family_id = ? AND installation_id = ? AND role = 'display' AND revoked_at IS NULL",
-        )
-        .get(family.id, row.claim_installation_id) as DeviceRow | undefined;
+        .prepare("SELECT * FROM devices WHERE family_id = ? AND installation_id = ? AND role = ? AND revoked_at IS NULL")
+        .get(family.id, row.claim_installation_id, row.role) as DeviceRow | undefined;
       let deviceId: string;
       if (existing) {
         deviceId = existing.id;
@@ -580,9 +643,9 @@ export class HereNowServer {
         deviceId = newId();
         this.db
           .prepare(
-            "INSERT INTO devices (id, family_id, role, name, installation_id, token_hash, created_at) VALUES (?, ?, 'display', ?, ?, ?, ?)",
+            "INSERT INTO devices (id, family_id, role, name, installation_id, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
           )
-          .run(deviceId, family.id, row.claim_device_name, row.claim_installation_id, sha256(token), this.now());
+          .run(deviceId, family.id, row.role, row.claim_device_name, row.claim_installation_id, sha256(token), this.now());
       }
       this.db
         .prepare("UPDATE pairing_codes SET state = 'approved', device_id = ?, issued_token = ?, approved_at = ? WHERE code = ?")
@@ -724,6 +787,118 @@ export class HereNowServer {
     return { wipeState: "confirmed" };
   }
 
+  private proposalView(p: ProposalRow) {
+    return {
+      id: p.id,
+      deviceName: p.device_name,
+      kind: p.kind,
+      payload: JSON.parse(p.payload),
+      assetRefs: JSON.parse(p.asset_refs),
+      createdAt: p.created_at,
+      state: p.state,
+      resolvedAt: p.resolved_at,
+    };
+  }
+
+  /** Family members can only suggest; nothing they send reaches the patient until the primary caregiver publishes it. */
+  submitProposal(req: IncomingMessage, body: Record<string, unknown>) {
+    const { device, family } = this.authenticate(req);
+    if (device.role !== "contributor") throw new HttpError(403, "contributor_only");
+    const kind = body.kind;
+    if (kind !== "recording" && kind !== "photo" && kind !== "event") throw new HttpError(400, "invalid_field", { field: "kind" });
+    const payload = body.payload && typeof body.payload === "object" ? JSON.stringify(body.payload) : "{}";
+    if (payload.length > 4000) throw new HttpError(413, "payload_too_large");
+    const refs = Array.isArray(body.assetRefs) ? body.assetRefs.filter((r): r is string => typeof r === "string") : [];
+    const missing = refs.filter((sha) => !this.db.prepare("SELECT 1 FROM assets WHERE family_id = ? AND sha256 = ?").get(family.id, sha));
+    if (missing.length) throw new HttpError(422, "missing_assets", { missingAssets: missing });
+    const id = newId();
+    this.tx(() => {
+      this.db
+        .prepare(
+          "INSERT INTO proposals (id, family_id, device_id, device_name, kind, payload, asset_refs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(id, family.id, device.id, device.name, kind, payload, JSON.stringify(refs), this.now());
+      this.bump(family.id);
+    });
+    return { id };
+  }
+
+  contributorState(req: IncomingMessage) {
+    const { device, family } = this.authenticate(req);
+    if (device.role !== "contributor") throw new HttpError(403, "contributor_only");
+    this.db.prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?").run(this.now(), device.id);
+    const own = this.db
+      .prepare("SELECT * FROM proposals WHERE device_id = ? ORDER BY created_at DESC LIMIT 50")
+      .all(device.id) as unknown as ProposalRow[];
+    return { familyName: family.name, deviceName: device.name, proposals: own.map((p) => this.proposalView(p)) };
+  }
+
+  resolveProposal(req: IncomingMessage, id: string, accept: boolean) {
+    const { family } = this.requireCaregiver(req);
+    const row = this.db.prepare("SELECT * FROM proposals WHERE id = ? AND family_id = ?").get(id, family.id) as ProposalRow | undefined;
+    if (!row) throw new HttpError(404, "proposal_not_found");
+    if (row.state !== "pending") return this.proposalView(row);
+    this.tx(() => {
+      this.db
+        .prepare("UPDATE proposals SET state = ?, resolved_at = ? WHERE id = ?")
+        .run(accept ? "accepted" : "declined", this.now(), id);
+      this.bump(family.id);
+    });
+    return this.proposalView(this.db.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as unknown as ProposalRow);
+  }
+
+  /** Optional playback log from a display device. Only start/stop events and foreground spans; kept 7 days. */
+  appendPlayLog(req: IncomingMessage, body: Record<string, unknown>) {
+    const { device, family } = this.authenticate(req);
+    if (device.role !== "display") throw new HttpError(403, "display_only");
+    const entries = Array.isArray(body.entries) ? body.entries.slice(0, 500) : [];
+    const coverage = Array.isArray(body.coverage) ? body.coverage.slice(0, 200) : [];
+    const cutoff = this.now() - PLAYLOG_RETENTION_MS;
+    this.tx(() => {
+      for (const raw of entries as Record<string, unknown>[]) {
+        const at = Date.parse(String(raw.at));
+        if (!Number.isFinite(at) || at < cutoff) continue;
+        this.db
+          .prepare("INSERT OR IGNORE INTO play_log (family_id, device_id, at, kind, trigger, source) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(family.id, device.id, at, String(raw.kind).slice(0, 20), String(raw.trigger).slice(0, 20), String(raw.source).slice(0, 20));
+      }
+      for (const raw of coverage as Record<string, unknown>[]) {
+        const start = Date.parse(String(raw.start));
+        const end = Date.parse(String(raw.end));
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end < cutoff) continue;
+        this.db
+          .prepare("INSERT INTO play_coverage (family_id, device_id, start, end) VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET end = MAX(end, excluded.end)")
+          .run(family.id, device.id, start, end);
+      }
+      this.db.prepare("DELETE FROM play_log WHERE family_id = ? AND at < ?").run(family.id, cutoff);
+      this.db.prepare("DELETE FROM play_coverage WHERE family_id = ? AND end < ?").run(family.id, cutoff);
+    });
+    return { ok: true };
+  }
+
+  playLog(req: IncomingMessage) {
+    const { family } = this.requireCaregiver(req);
+    const cutoff = this.now() - PLAYLOG_RETENTION_MS;
+    const iso = isoSeconds;
+    const entries = this.db
+      .prepare("SELECT device_id, at, kind, trigger, source FROM play_log WHERE family_id = ? AND at >= ? ORDER BY at")
+      .all(family.id, cutoff) as { device_id: string; at: number; kind: string; trigger: string; source: string }[];
+    const coverage = this.db
+      .prepare("SELECT device_id, start, end FROM play_coverage WHERE family_id = ? AND end >= ? ORDER BY start")
+      .all(family.id, cutoff) as { device_id: string; start: number; end: number }[];
+    return {
+      entries: entries.map((e) => ({ deviceId: e.device_id, at: iso(e.at), kind: e.kind, trigger: e.trigger, source: e.source })),
+      coverage: coverage.map((c) => ({ deviceId: c.device_id, start: iso(c.start), end: iso(c.end) })),
+    };
+  }
+
+  clearPlayLog(req: IncomingMessage) {
+    const { family } = this.requireCaregiver(req);
+    this.db.prepare("DELETE FROM play_log WHERE family_id = ?").run(family.id);
+    this.db.prepare("DELETE FROM play_coverage WHERE family_id = ?").run(family.id);
+    return { cleared: true };
+  }
+
   deleteFamily(req: IncomingMessage) {
     const { device, family } = this.requireCaregiver(req);
     this.tx(() => {
@@ -735,6 +910,9 @@ export class HereNowServer {
       this.db.prepare("DELETE FROM assets WHERE family_id = ?").run(family.id);
       this.db.prepare("DELETE FROM pairing_codes WHERE family_id = ?").run(family.id);
       this.db.prepare("DELETE FROM publishes WHERE family_id = ?").run(family.id);
+      this.db.prepare("DELETE FROM proposals WHERE family_id = ?").run(family.id);
+      this.db.prepare("DELETE FROM play_log WHERE family_id = ?").run(family.id);
+      this.db.prepare("DELETE FROM play_coverage WHERE family_id = ?").run(family.id);
       this.db
         .prepare("UPDATE devices SET revoked_at = COALESCE(revoked_at, ?), wipe_state = CASE WHEN wipe_state = 'confirmed' THEN 'confirmed' ELSE 'pending' END, report = NULL WHERE family_id = ?")
         .run(this.now(), family.id);
@@ -799,7 +977,15 @@ export function createHandler(app: HereNowServer) {
       if (method === "GET" && path === "/v1/family/deletion") return send(200, app.deletionStatus(req));
       if (method === "POST" && path === "/v1/family/publish") return send(200, app.publish(req, await readJson(req)));
       if (method === "POST" && path === "/v1/family/controls") return send(200, app.setControls(req, await readJson(req)));
-      if (method === "POST" && path === "/v1/family/pairing-codes") return send(201, app.createPairingCode(req));
+      if (method === "POST" && path === "/v1/family/pairing-codes") return send(201, app.createPairingCode(req, await readJson(req)));
+      if ((match = path.match(/^\/v1\/family\/proposals\/([\w-]+)\/(accept|decline)$/)) && method === "POST") {
+        return send(200, app.resolveProposal(req, match[1], match[2] === "accept"));
+      }
+      if (method === "GET" && path === "/v1/family/playlog") return send(200, app.playLog(req));
+      if (method === "DELETE" && path === "/v1/family/playlog") return send(200, app.clearPlayLog(req));
+      if (method === "POST" && path === "/v1/contrib/proposals") return send(201, app.submitProposal(req, await readJson(req)));
+      if (method === "GET" && path === "/v1/contrib/me") return send(200, app.contributorState(req));
+      if (method === "POST" && path === "/v1/device/playlog") return send(200, app.appendPlayLog(req, await readJson(req)));
       if (method === "POST" && path === "/v1/family/own-display") return send(200, app.registerOwnDisplay(req, await readJson(req)));
       if ((match = path.match(/^\/v1\/family\/claims\/([\w-]+)\/(approve|reject)$/)) && method === "POST") {
         return send(200, app.resolveClaim(req, match[1], match[2] === "approve"));

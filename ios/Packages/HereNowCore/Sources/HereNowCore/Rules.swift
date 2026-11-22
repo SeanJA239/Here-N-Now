@@ -81,11 +81,31 @@ public enum PublishValidator {
             }
         }
 
-        let upcoming = active.filter { $0.showUntil > now }
+        for plan in snapshot.recurring where !plan.isCancelled {
+            let name = plan.personName.isEmpty ? "未命名重复安排" : plan.personName
+            if plan.personName.trimmingCharacters(in: .whitespaces).isEmpty || plan.line.trimmingCharacters(in: .whitespaces).isEmpty {
+                block("recurring.text.\(plan.id)", "重复安排「\(name)」需要人物和短句")
+            } else if !fits(plan.line, plan.photoAssetID != nil) {
+                block("recurring.fit.\(plan.id)", "重复安排「\(name)」的短句在患者屏幕上超过两行，请改短")
+            }
+            if plan.weekdays.isEmpty { block("recurring.days.\(plan.id)", "重复安排「\(name)」至少要选一天") }
+            if plan.showForMinutes <= 0 { block("recurring.until.\(plan.id)", "重复安排「\(name)」需要选择每次显示多久") }
+            if plan.recording != nil, !plan.recordingIsCurrent {
+                warn("recurring.recording.\(plan.id)", "重复安排「\(name)」已修改，旧录音待复核；复核前不会播放")
+            }
+        }
+        for item in snapshot.comfortItems where item.recording == nil {
+            block("comfort.recording.\(item.id)", "安抚内容「\(item.title)」需要一段录音")
+        }
+        if snapshot.autoPlay.enabled, snapshot.autoPlay.dailyLimit < 1 {
+            block("autoplay.limit", "自动问候已开启，每日上限至少为 1 次")
+        }
+
+        let upcoming = snapshot.effectiveEvents(around: now).filter { !$0.isCancelled && $0.showUntil > now }
         let groups = Dictionary(grouping: upcoming) { Int($0.start.timeIntervalSince1970 / 60) }
         for (minute, group) in groups where group.count > 1 {
             if group.filter(\.preferredOnTie).count != 1 {
-                block("event.tie.\(minute)", "有 \(group.count) 项安排开始时间相同，请合并，或选择患者端显示哪一项", group.first?.id)
+                block("event.tie.\(minute)", "有 \(group.count) 项安排开始时间相同（含重复安排），请合并，或在单次安排中选择患者端显示哪一项", group.first?.id)
             }
         }
         return issues
@@ -204,6 +224,10 @@ public enum SnapshotMerger {
         result.display = pick(base?.display, mine.display, theirs.display, "显示偏好")
         result.voice = pick(base?.voice, mine.voice, theirs.voice, "声音偏好")
         result.place = pick(base?.place, mine.place, theirs.place, "地点提示")
+        result.recurring = pick(base?.recurring, mine.recurring, theirs.recurring, "重复安排")
+        result.comfortItems = pick(base?.comfortItems, mine.comfortItems, theirs.comfortItems, "安抚内容")
+        result.autoPlay = pick(base?.autoPlay, mine.autoPlay, theirs.autoPlay, "自动问候设置")
+        result.playLog = pick(base?.playLog, mine.playLog, theirs.playLog, "播放使用记录设置")
 
         let baseEvents = Dictionary((base?.events ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let mineEvents = Dictionary(mine.events.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })

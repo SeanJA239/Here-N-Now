@@ -4,11 +4,13 @@ A calm, always-visible screen for people living with Alzheimer's disease at home
 
 It is not a medical, medication, location, or safety-monitoring product.
 
+Beyond the core screen, the app includes the PRD's P1 features, all off or manual by default: weekly recurring plans, comfort recordings a caregiver starts by hand, scheduled greetings with quiet hours and daily limits, an optional 7-day playback log, family members who can only suggest recordings, photos, and plans, and on-device voice dictation that fills a draft. A widget/StandBy version was assessed and deferred; see `docs/standby-widget-assessment.md`.
+
 ## Layout
 
 - `ios/`: one universal SwiftUI app (iOS 17+). An iPad paired as a patient screen shows patient mode; an iPhone that creates a family is the caregiver app. A single device can do both.
 - `ios/Packages/HereNowCore`: platform-independent rules: what the patient sees at a given instant, event validity, publish validation, three-way merge, clock-jump detection, and palette contrast.
-- `server/`: the sync service (Node 24+, built-in `node:sqlite`, no dependencies): pairing, versioned publishing, receipts, revocation, deletion, and recovery.
+- `server/`: the sync service (Node 24+, built-in `node:sqlite`, no dependencies): pairing, versioned publishing, receipts, revocation, deletion, recovery, family suggestions, comfort commands, and the optional play log.
 
 The app reaches sync only through the `CaregiverSyncing` and `DisplaySyncing` protocols (`ios/HereNow/Sync/SyncAPI.swift`), so the service can be replaced, for example with CloudKit, without changing the UI or the rules.
 
