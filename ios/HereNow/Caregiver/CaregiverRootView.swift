@@ -89,8 +89,9 @@ struct DashboardView: View {
                 }
                 .padding(16)
             }
-            .background(Theme.wallpaper)
+            .forestBackground()
             .navigationTitle(store.credential.familyName.isEmpty ? "此刻" : store.credential.familyName)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 if ownDisplay != nil {
                     ToolbarItem(placement: .primaryAction) {
@@ -149,7 +150,7 @@ struct DashboardView: View {
             Text("按已发布的最新版本计算。草稿不会出现在患者屏幕上。").font(.footnote).foregroundStyle(.secondary)
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.background.opacity(0.92)))
+        .tile()
     }
 
     @ViewBuilder
@@ -178,7 +179,7 @@ struct DashboardView: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.background.opacity(0.92)))
+            .tile()
         }
     }
 }
@@ -256,7 +257,7 @@ struct ControlsCard: View {
                 .font(.footnote).foregroundStyle(.secondary)
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.background.opacity(0.92)))
+        .tile()
     }
 }
 
@@ -280,7 +281,7 @@ struct SetupChecklist: View {
                     .font(.subheadline)
             }
             .padding(14)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.background.opacity(0.92)))
+            .tile()
         }
     }
 

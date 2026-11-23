@@ -282,7 +282,7 @@ public struct RGB: Equatable, Sendable {
     }
 }
 
-/// Patient screen colors, inspired by the Home app's warm wallpapers and light accessory tiles.
+/// Patient screen colors: forest-green wallpapers with light cards, in the spirit of the Home app.
 public struct PatientPalette: Sendable {
     public var backgroundTop: UInt32
     public var backgroundBottom: UInt32
@@ -298,17 +298,17 @@ public struct PatientPalette: Sendable {
     public static func of(_ palette: Moment.Palette) -> PatientPalette {
         switch palette {
         case .day:
-            PatientPalette(backgroundTop: 0xF8E6D2, backgroundBottom: 0xEDC9A4, timeText: 0x2B1C12, secondaryTimeText: 0x4A3424,
-                           card: 0xFFFFFF, cardText: 0x1C1C1E, playFill: 0xB4470C, playText: 0xFFFFFF,
+            PatientPalette(backgroundTop: 0x3F6B52, backgroundBottom: 0x24463A, timeText: 0xF7F4EA, secondaryTimeText: 0xE6EEE2,
+                           card: 0xFFFFFF, cardText: 0x1C1C1E, playFill: 0x2E6B4F, playText: 0xFFFFFF,
                            stopFill: 0x1C1C1E, stopText: 0xFFFFFF)
         case .evening:
-            PatientPalette(backgroundTop: 0x4A4370, backgroundBottom: 0x2B2A48, timeText: 0xFFFFFF, secondaryTimeText: 0xE4DEF2,
-                           card: 0xFFF8F0, cardText: 0x1C1C1E, playFill: 0xB4470C, playText: 0xFFFFFF,
+            PatientPalette(backgroundTop: 0x2A4A3C, backgroundBottom: 0x18302A, timeText: 0xF7F4EA, secondaryTimeText: 0xE2EADF,
+                           card: 0xFFFBF1, cardText: 0x1C1C1E, playFill: 0x2E6B4F, playText: 0xFFFFFF,
                            stopFill: 0x1C1C1E, stopText: 0xFFFFFF)
         case .night:
-            PatientPalette(backgroundTop: 0x141A2C, backgroundBottom: 0x0B0E18, timeText: 0xECE7DD, secondaryTimeText: 0xC9C3B8,
-                           card: 0x1F2538, cardText: 0xECE7DD, playFill: 0xE9A66B, playText: 0x1A1206,
-                           stopFill: 0xECE7DD, stopText: 0x141A2C)
+            PatientPalette(backgroundTop: 0x122019, backgroundBottom: 0x0A130F, timeText: 0xECE7DD, secondaryTimeText: 0xC9C9BC,
+                           card: 0x1C2C25, cardText: 0xECE7DD, playFill: 0xE6D9A6, playText: 0x1A1A10,
+                           stopFill: 0xECE7DD, stopText: 0x122019)
         }
     }
 }

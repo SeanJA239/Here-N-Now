@@ -40,6 +40,7 @@ struct DisplayPairingView: View {
                     .padding(40)
                     .frame(maxWidth: 620)
                 }
+                .environment(\.colorScheme, .dark)
                 .navigationTitle(role == .contributor ? "加入家庭" : "连接患者屏幕")
                 .onAppear { if deviceName.isEmpty { deviceName = role == .contributor ? "" : AppModel.deviceName } }
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", action: onClose) } }
@@ -61,7 +62,7 @@ struct DisplayPairingView: View {
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .padding()
-                    .background(RoundedRectangle(cornerRadius: 20).fill(.background))
+                    .tile()
                     .accessibilityIdentifier("pair.code")
                 primary(working ? "正在核对…" : "下一步", id: "pair.next", disabled: code.filter { $0.isLetter || $0.isNumber }.count != 8 || working) {
                     await preview()
@@ -79,7 +80,7 @@ struct DisplayPairingView: View {
                     TextField(role == .contributor ? "例如 小雨（女儿）" : "例如 客厅 iPad", text: $deviceName)
                         .font(.title3)
                         .padding()
-                        .background(RoundedRectangle(cornerRadius: 16).fill(.background))
+                        .tile(cornerRadius: 16)
                         .accessibilityIdentifier("pair.deviceName")
                 }
                 primary(working ? "正在发送…" : "确认加入", id: "pair.confirm", disabled: deviceName.isEmpty || working) {
@@ -106,9 +107,9 @@ struct DisplayPairingView: View {
         Button { Task { await action() } } label: {
             Text(title)
                 .font(.title2.bold())
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.accent)
                 .frame(maxWidth: .infinity, minHeight: 64)
-                .background(RoundedRectangle(cornerRadius: 32).fill(Theme.accent.opacity(disabled ? 0.4 : 1)))
+                .background(RoundedRectangle(cornerRadius: 32).fill(Color.white.opacity(disabled ? 0.35 : 1)))
         }
         .buttonStyle(.plain)
         .disabled(disabled)

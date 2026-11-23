@@ -110,6 +110,7 @@ struct WelcomeView: View {
                 .frame(maxWidth: .infinity)
             }
         }
+        .environment(\.colorScheme, .dark)
         .fullScreenCover(item: $route) { route in
             switch route {
             case .createFamily: CaregiverOnboardingView { self.route = nil }
@@ -125,9 +126,9 @@ struct WelcomeView: View {
             HStack(spacing: 16) {
                 Image(systemName: icon)
                     .font(.title2.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.badgeInk)
                     .frame(width: 52, height: 52)
-                    .background(Circle().fill(Theme.accentFill))
+                    .background(Circle().fill(target == .recover ? Theme.badgeBlue : Theme.badgeYellow))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.headline).foregroundStyle(.primary)
                     Text(detail).font(.subheadline).foregroundStyle(.secondary)
@@ -136,7 +137,7 @@ struct WelcomeView: View {
                 Image(systemName: "chevron.right").foregroundStyle(.secondary)
             }
             .padding(18)
-            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(.background.opacity(0.92)))
+            .tile(cornerRadius: 22)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("welcome.\(target)")
@@ -309,7 +310,8 @@ struct PINPad<Footer: View>: View {
                                 Text(key)
                                     .font(.title.weight(.medium))
                                     .frame(width: 88, height: 88)
-                                    .background(Circle().fill(.background.opacity(0.9)))
+                                    .background(Circle().fill(Theme.tileFill))
+                                    .environment(\.colorScheme, .light)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(key == "⌫" ? "删除" : key)
@@ -321,5 +323,6 @@ struct PINPad<Footer: View>: View {
             }
             .padding(32)
         }
+        .environment(\.colorScheme, .dark)
     }
 }

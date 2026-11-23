@@ -29,8 +29,6 @@ struct CaregiverOnboardingView: View {
                 }
                 if let error { Text(error).foregroundStyle(Theme.bad) }
             }
-            .scrollContentBackground(.hidden)
-            .background(Theme.wallpaper)
             .navigationTitle(title)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

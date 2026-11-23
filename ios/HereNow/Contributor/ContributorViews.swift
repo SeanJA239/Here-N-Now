@@ -91,7 +91,8 @@ struct ContributorHomeView: View {
                 }
                 .padding(16)
             }
-            .background(Theme.wallpaper)
+            .forestBackground()
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .navigationTitle(store.credential.familyName)
             .refreshable { await store.refresh() }
             .task { await store.refresh() }
@@ -102,12 +103,12 @@ struct ContributorHomeView: View {
     private func action(_ icon: String, _ title: String, _ kind: Proposal.Kind) -> some View {
         Button { composing = kind } label: {
             VStack(spacing: 8) {
-                Image(systemName: icon).font(.title2).foregroundStyle(.white)
-                    .frame(width: 48, height: 48).background(Circle().fill(Theme.accentFill))
+                Image(systemName: icon).font(.title2).foregroundStyle(Theme.badgeInk)
+                    .frame(width: 48, height: 48).background(Circle().fill(kind == .photo ? Theme.badgeBlue : Theme.badgeYellow))
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
             }
             .frame(maxWidth: .infinity, minHeight: 110)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.background.opacity(0.92)))
+            .tile()
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("contributor.\(kind.rawValue)")

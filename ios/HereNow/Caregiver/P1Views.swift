@@ -294,7 +294,7 @@ struct ComfortControlCard: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
             .padding(14)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.background.opacity(0.92)))
+            .tile()
         }
     }
 }
@@ -437,7 +437,7 @@ struct ProposalsCard: View {
                 Text("家人提交的内容不会直接出现在患者屏幕上；放进草稿后仍需你预览并发布。").font(.footnote).foregroundStyle(.secondary)
             }
             .padding(14)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.background.opacity(0.92)))
+            .tile()
             .sheet(item: $placing) { ProposalPlacementSheet(store: store, proposal: $0) }
         }
     }

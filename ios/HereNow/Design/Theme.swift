@@ -12,20 +12,33 @@ extension Color {
     }
 }
 
-/// Caregiver-side styling: Home-app-like warm wallpaper with light, rounded tiles.
+/// Caregiver-side styling: Home-app-like forest-green wallpaper with white, rounded tiles and soft badges.
 enum Theme {
-    /// Orange dark enough for text on white (4.7:1).
-    static let accent = Color(hex: 0xC25100)
-    static let accentFill = Color(hex: 0xFF9500)
-    static let tile = Color(.secondarySystemGroupedBackground)
+    /// Forest green dark enough for text on white (6.3:1); also the tint for toggles and buttons.
+    static let accent = Color(hex: 0x2E6B4F)
     static let ok = Color(hex: 0x1E7B34)
-    static let warn = Color(hex: 0x9A5B00)
+    static let warn = Color(hex: 0x8A5A00)
     static let bad = Color(hex: 0xC4281C)
+    /// Low-saturation badge fills behind dark glyphs.
+    static let badgeYellow = Color(hex: 0xF1E4B5)
+    static let badgeBlue = Color(hex: 0xD4E4EF)
+    static let badgeRose = Color(hex: 0xF0D6D1)
+    static let badgeNeutral = Color(hex: 0xE5E9E3)
+    static let badgeInk = Color(hex: 0x24402F)
+    static let tileFill = Color.white.opacity(0.94)
 
     static var wallpaper: some View {
-        LinearGradient(colors: [Color(hex: 0xF6D9BC), Color(hex: 0xF3E7DA), Color(hex: 0xEFEAE4)],
+        LinearGradient(colors: [Color(hex: 0x3F6B52), Color(hex: 0x2B4C3B), Color(hex: 0x1D382B)],
                        startPoint: .top, endPoint: .bottom)
             .ignoresSafeArea()
+    }
+
+    /// Status colors map to soft badges: fine → blue, attention → yellow, problem → rose.
+    static func badge(for tint: Color) -> Color {
+        if tint == ok { return badgeBlue }
+        if tint == warn { return badgeYellow }
+        if tint == bad { return badgeRose }
+        return badgeNeutral
     }
 
     static func patientFont(_ size: Double, weight: Font.Weight = .semibold) -> Font {
@@ -46,9 +59,9 @@ struct StatusTile: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.badgeInk)
                 .frame(width: 36, height: 36)
-                .background(Circle().fill(tint))
+                .background(Circle().fill(Theme.badge(for: tint)))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
@@ -61,8 +74,22 @@ struct StatusTile: View {
         }
         .padding(framed ? 14 : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.background.opacity(framed ? 0.92 : 0)))
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(framed ? Theme.tileFill : .clear))
+        .environment(\.colorScheme, .light)
         .accessibilityElement(children: .combine)
+    }
+}
+
+extension View {
+    /// White rounded tile that keeps dark text even on the dark-green wallpaper.
+    func tile(cornerRadius: CGFloat = 20) -> some View {
+        background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Theme.tileFill))
+            .environment(\.colorScheme, .light)
+    }
+
+    /// Forest-green wallpaper; text placed directly on it renders light.
+    func forestBackground() -> some View {
+        background(Theme.wallpaper).environment(\.colorScheme, .dark)
     }
 }
 
