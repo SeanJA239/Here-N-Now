@@ -70,30 +70,36 @@ struct ContributorHomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("你可以给「\(store.credential.familyName)」的主要照护者提供录音、照片或安排建议。照护者决定是否使用，内容不会直接出现在患者屏幕上。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(store.credential.familyName).font(.largeTitle.bold())
+                        Text("给主要照护者提供录音、照片或安排建议。照护者决定是否使用，内容不会直接出现在患者屏幕上。")
+                            .font(.subheadline).opacity(0.85)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.top, 12)
                     HStack(spacing: 12) {
                         action("mic.fill", "录一段话", .recording)
                         action("photo.fill", "选一张照片", .photo)
                         action("calendar.badge.plus", "建议安排", .event)
                     }
                     if let problem = store.problem { Text(problem).font(.footnote).foregroundStyle(Theme.bad) }
-                    Text("我的提交").font(.headline).padding(.top, 8)
+                    HomeSectionTitle(text: "我的提交").padding(.top, 60)
                     if store.proposals.isEmpty {
                         Text("还没有提交").foregroundStyle(.secondary)
                     }
-                    ForEach(store.proposals) { proposal in
-                        StatusTile(icon: icon(proposal.kind), tint: tint(proposal.state), title: label(proposal.kind),
-                                   value: stateText(proposal.state),
-                                   detail: proposal.payload.line ?? proposal.payload.note ?? proposal.payload.speakerLabel)
+                    LazyVGrid(columns: HomeGrid.columns, spacing: 12) {
+                        ForEach(store.proposals) { proposal in
+                            HomeTile(icon: icon(proposal.kind), tint: tint(proposal.state),
+                                     title: proposal.payload.line ?? proposal.payload.note ?? label(proposal.kind),
+                                     value: "\(label(proposal.kind)) · \(stateText(proposal.state))", active: proposal.state != "declined")
+                        }
                     }
                 }
                 .padding(16)
+                .forestPage(solid: 150, fade: 200)
             }
-            .forestBackground()
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .navigationTitle(store.credential.familyName)
+            .background(Theme.pageBase)
+            .toolbar(.hidden, for: .navigationBar)
             .refreshable { await store.refresh() }
             .task { await store.refresh() }
             .sheet(item: $composing) { ContributorComposeSheet(store: store, kind: $0) }
@@ -103,8 +109,7 @@ struct ContributorHomeView: View {
     private func action(_ icon: String, _ title: String, _ kind: Proposal.Kind) -> some View {
         Button { composing = kind } label: {
             VStack(spacing: 8) {
-                Image(systemName: icon).font(.title2).foregroundStyle(Theme.badgeInk)
-                    .frame(width: 48, height: 48).background(Circle().fill(kind == .photo ? Theme.badgeBlue : Theme.badgeYellow))
+                GlassBadge(systemName: icon, tint: kind == .photo ? Theme.badgeBlue : Theme.badgeYellow, size: 48)
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
             }
             .frame(maxWidth: .infinity, minHeight: 110)
@@ -127,7 +132,7 @@ struct ContributorHomeView: View {
     }
 
     private func tint(_ state: String) -> Color {
-        switch state { case "accepted": Theme.ok; case "declined": .gray; default: Theme.warn }
+        switch state { case "accepted": Theme.badgeBlue; case "declined": Theme.badgeNeutral; default: Theme.badgeYellow }
     }
 }
 

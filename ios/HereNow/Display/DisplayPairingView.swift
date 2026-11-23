@@ -27,7 +27,14 @@ struct DisplayPairingView: View {
             NavigationStack {
                 ZStack {
                     Theme.wallpaper
-                    VStack(spacing: 24) {
+                    VStack(spacing: 20) {
+                        HStack {
+                            Text(role == .contributor ? "加入家庭" : "连接患者屏幕").font(.largeTitle.bold())
+                            Spacer()
+                            Button("取消", action: onClose).font(.headline)
+                        }
+                        .foregroundStyle(.white)
+                        VStack(spacing: 24) {
                         content
                         if let error {
                             Text(error)
@@ -36,14 +43,15 @@ struct DisplayPairingView: View {
                                 .multilineTextAlignment(.center)
                                 .accessibilityIdentifier("pair.error")
                         }
+                        }
+                        .padding(28)
+                        .tile(cornerRadius: 32)
                     }
-                    .padding(40)
+                    .padding(24)
                     .frame(maxWidth: 620)
                 }
-                .environment(\.colorScheme, .dark)
-                .navigationTitle(role == .contributor ? "加入家庭" : "连接患者屏幕")
+                .toolbar(.hidden, for: .navigationBar)
                 .onAppear { if deviceName.isEmpty { deviceName = role == .contributor ? "" : AppModel.deviceName } }
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", action: onClose) } }
             }
         }
     }
@@ -62,7 +70,7 @@ struct DisplayPairingView: View {
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .padding()
-                    .tile()
+                    .background(RoundedRectangle(cornerRadius: 20).fill(Theme.pageBase))
                     .accessibilityIdentifier("pair.code")
                 primary(working ? "正在核对…" : "下一步", id: "pair.next", disabled: code.filter { $0.isLetter || $0.isNumber }.count != 8 || working) {
                     await preview()
@@ -80,7 +88,7 @@ struct DisplayPairingView: View {
                     TextField(role == .contributor ? "例如 小雨（女儿）" : "例如 客厅 iPad", text: $deviceName)
                         .font(.title3)
                         .padding()
-                        .tile(cornerRadius: 16)
+                        .background(RoundedRectangle(cornerRadius: 16).fill(Theme.pageBase))
                         .accessibilityIdentifier("pair.deviceName")
                 }
                 primary(working ? "正在发送…" : "确认加入", id: "pair.confirm", disabled: deviceName.isEmpty || working) {
@@ -107,9 +115,9 @@ struct DisplayPairingView: View {
         Button { Task { await action() } } label: {
             Text(title)
                 .font(.title2.bold())
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: 64)
-                .background(RoundedRectangle(cornerRadius: 32).fill(Color.white.opacity(disabled ? 0.35 : 1)))
+                .background(RoundedRectangle(cornerRadius: 32).fill(Theme.accent.opacity(disabled ? 0.35 : 1)))
         }
         .buttonStyle(.plain)
         .disabled(disabled)

@@ -26,11 +26,20 @@ enum Theme {
     static let badgeNeutral = Color(hex: 0xE5E9E3)
     static let badgeInk = Color(hex: 0x24402F)
     static let tileFill = Color.white.opacity(0.94)
+    static let forest = Color(hex: 0x3F6B52)
+    /// Page color the forest gradient fades into.
+    static let pageBase = Color(hex: 0xF3F4EF)
 
-    static var wallpaper: some View {
-        LinearGradient(colors: [Color(hex: 0x3F6B52), Color(hex: 0x2B4C3B), Color(hex: 0x1D382B)],
+    /// Forest green at the top, fading to transparent toward the bottom of the screen.
+    static func forestFade(solidUntil: CGFloat = 0.3, clearAt: CGFloat = 0.75) -> LinearGradient {
+        LinearGradient(stops: [.init(color: forest, location: 0), .init(color: forest, location: solidUntil),
+                               .init(color: forest.opacity(0), location: clearAt)],
                        startPoint: .top, endPoint: .bottom)
-            .ignoresSafeArea()
+    }
+
+    /// Full-screen backdrop for centered screens (PIN, pairing).
+    static var wallpaper: some View {
+        ZStack { pageBase; forestFade() }.ignoresSafeArea()
     }
 
     /// Status colors map to soft badges: fine → blue, attention → yellow, problem → rose.
@@ -57,12 +66,7 @@ struct StatusTile: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.badgeInk)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Theme.badge(for: tint)))
-                .accessibilityHidden(true)
+            GlassBadge(systemName: icon, tint: Theme.badge(for: tint))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 Text(value).font(.headline).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
@@ -87,10 +91,85 @@ extension View {
             .environment(\.colorScheme, .light)
     }
 
-    /// Forest-green wallpaper; text placed directly on it renders light.
-    func forestBackground() -> some View {
-        background(Theme.wallpaper).environment(\.colorScheme, .dark)
+    /// Scrolling page whose top band is forest green and fades out, so it moves with the header text on it.
+    /// Text placed in the first `solid` points should be light; everything below it sits on the light page.
+    func forestPage(solid: CGFloat = 200, fade: CGFloat = 260) -> some View {
+        background(alignment: .top) {
+            Theme.forestFade(solidUntil: (solid + 600) / (solid + fade + 600), clearAt: 1)
+                .frame(height: solid + fade + 600)
+                .offset(y: -600)
+                .allowsHitTesting(false)
+        }
+        .environment(\.colorScheme, .light)
     }
+
+    /// iOS 26 Liquid Glass when available; a thin material elsewhere.
+    @ViewBuilder
+    func glassCircle(tint: Color) -> some View {
+        if #available(iOS 26.0, *) {
+            glassEffect(.regular.tint(tint.opacity(0.25)), in: Circle())
+        } else {
+            background(.ultraThinMaterial, in: Circle())
+        }
+    }
+}
+
+/// Soft yellow or blue icon with a Liquid Glass rim; the color fades to clear toward the bottom.
+struct GlassBadge: View {
+    var systemName: String
+    var tint: Color
+    var size: CGFloat = 36
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: size * 0.46, weight: .semibold))
+            .foregroundStyle(Theme.badgeInk)
+            .frame(width: size, height: size)
+            .background(Circle().fill(LinearGradient(colors: [tint, tint.opacity(0.55), tint.opacity(0)],
+                                                       startPoint: .top, endPoint: .bottom)))
+            .overlay(
+                Circle().strokeBorder(
+                    LinearGradient(colors: [.white, tint.opacity(0.9), .white.opacity(0)], startPoint: .top, endPoint: .bottom),
+                    lineWidth: size > 40 ? 2 : 1.5)
+            )
+            .glassCircle(tint: tint)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Home-app accessory tile: glass icon on the left, name and state on the right. Dimmed when `active` is false.
+struct HomeTile: View {
+    var icon: String
+    var tint: Color
+    var title: String
+    var value: String
+    var active = true
+
+    var body: some View {
+        HStack(spacing: 10) {
+            GlassBadge(systemName: icon, tint: tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                Text(value).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.white.opacity(active ? 0.94 : 0.62)))
+        .environment(\.colorScheme, .light)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Section title in the Home app style.
+struct HomeSectionTitle: View {
+    var text: String
+    var body: some View { Text(text).font(.title3.weight(.semibold)).padding(.top, 6) }
+}
+
+enum HomeGrid {
+    static let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
 }
 
 enum TextFit {

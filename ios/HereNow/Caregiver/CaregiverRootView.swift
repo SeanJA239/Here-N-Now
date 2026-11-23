@@ -69,6 +69,7 @@ struct DashboardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     header
+                    statusChips
                     if !store.online, let problem = store.connectionProblem {
                         StatusTile(icon: "wifi.slash", tint: Theme.bad, title: "未连接同步服务", value: problem,
                                    detail: store.lastFetchAt.map { "以下状态更新于 \($0.relativeChinese)，此后的情况未知" })
@@ -78,28 +79,25 @@ struct DashboardView: View {
                                    detail: notes.dropFirst().joined(separator: "\n"))
                             .onTapGesture { openTab(1) }
                     }
+                    previewCard
                     SetupChecklist(store: store, openTab: openTab)
                     ProposalsCard(store: store)
                     deliveryTile
-                    previewCard
-                    ComfortControlCard(store: store)
-                    ControlsCard(store: store)
-                    devicesSummary
+                    HomeSectionTitle(text: "控制")
+                    LazyVGrid(columns: HomeGrid.columns, spacing: 12) {
+                        ControlTiles(store: store)
+                        ComfortTiles(store: store)
+                    }
+                    Text("暂停立即生效，不需要重新发布。安抚内容请在患者身边时使用；患者点“停止”随时可以结束。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    devicesSection
                     upcoming
                 }
                 .padding(16)
+                .forestPage()
             }
-            .forestBackground()
-            .navigationTitle(store.credential.familyName.isEmpty ? "此刻" : store.credential.familyName)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                if ownDisplay != nil {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("进入患者屏幕") { model.lockToPatientMode() }
-                            .accessibilityIdentifier("caregiver.enterPatientMode")
-                    }
-                }
-            }
+            .background(Theme.pageBase)
+            .toolbar(.hidden, for: .navigationBar)
             .refreshable { await store.refreshNow() }
             .onReceive(timer) { now = $0 }
         }
@@ -108,10 +106,71 @@ struct DashboardView: View {
     private var header: some View {
         let snapshot = store.publishedSnapshot ?? store.workingSnapshot
         return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(store.credential.familyName.isEmpty ? "此刻" : store.credential.familyName)
+                    .font(.largeTitle.bold())
+                Spacer()
+                if ownDisplay != nil {
+                    Button("进入患者屏幕") { model.lockToPatientMode() }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.badgeInk)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Capsule().fill(Theme.badgeYellow))
+                        .accessibilityIdentifier("caregiver.enterPatientMode")
+                }
+            }
             Text("\(snapshot.profile.callName) 当地时间 \(now.formatted(in: snapshot.timeZone, "M月d日 HH:mm"))（\(snapshot.profile.timeZoneID)）")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .opacity(0.85)
         }
+        .foregroundStyle(.white)
+        .padding(.top, 12)
+    }
+
+    /// Home-style summary chips: one glance at publishing, devices, sound, and suggestions.
+    private var statusChips: some View {
+        let family = store.family
+        let controls = family?.controls ?? .init()
+        let displays = family?.activeDisplays ?? []
+        let online = displays.filter { ($0.lastSeenAt?.serverDate).map { Date().timeIntervalSince($0) < 120 } ?? false }
+        let publish: (String, Color) = {
+            switch store.deliveryStatus {
+            case .nothingPublished: return ("未发布", Theme.badgeNeutral)
+            case .savedLocally: return ("等待传送", Theme.badgeYellow)
+            case .awaitingDevice: return ("等待应用", Theme.badgeYellow)
+            case let .applied(v): return ("第 \(v) 版已应用", Theme.badgeBlue)
+            case let .noDisplay(v): return ("第 \(v) 版", Theme.badgeNeutral)
+            }
+        }()
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                chip("checkmark.circle", "发布", publish.0, publish.1) { openTab(1) }
+                chip("ipad.landscape", "患者设备", displays.isEmpty ? "未连接" : "\(online.count)/\(displays.count) 在线",
+                     online.count == displays.count && !displays.isEmpty ? Theme.badgeBlue : Theme.badgeYellow) { openTab(2) }
+                chip(controls.soundPaused ? "speaker.slash" : "speaker.wave.2", "声音", controls.soundPaused ? "已暂停" : "开",
+                     controls.soundPaused ? Theme.badgeYellow : Theme.badgeBlue) {}
+                if !store.pendingProposals.isEmpty {
+                    chip("tray.and.arrow.down", "家人提交", "\(store.pendingProposals.count) 条待看", Theme.badgeYellow) {}
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func chip(_ icon: String, _ title: String, _ value: String, _ tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                GlassBadge(systemName: icon, tint: tint, size: 30)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(value).font(.footnote.weight(.semibold)).foregroundStyle(.primary)
+                }
+            }
+            .padding(.leading, 8).padding(.trailing, 14).padding(.vertical, 8)
+            .background(Capsule().fill(Theme.tileFill))
+            .environment(\.colorScheme, .light)
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -145,41 +204,56 @@ struct DashboardView: View {
             snapshot: snapshot, controls: store.family?.controls ?? .init(), now: now,
             availableAssets: store.assets.all, speechAvailable: AudioEnvironment.speechAvailable(language: snapshot?.profile.languageCode ?? "zh-CN")))
         return VStack(alignment: .leading, spacing: 8) {
-            Text("患者屏幕现在应显示").font(.headline)
             PatientPreview(moment: moment, assets: store.assets)
-            Text("按已发布的最新版本计算。草稿不会出现在患者屏幕上。").font(.footnote).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                GlassBadge(systemName: "rectangle.inset.filled", tint: Theme.badgeBlue, size: 28)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("患者屏幕现在应显示").font(.subheadline.weight(.semibold))
+                    Text("按已发布的最新版本计算，草稿不会出现").font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
-        .padding(14)
-        .tile()
+        .padding(10)
+        .tile(cornerRadius: 24)
     }
 
     @ViewBuilder
-    private var devicesSummary: some View {
-        if let family = store.family {
-            ForEach(family.activeDisplays) { device in
-                DeviceStatusTile(device: device, currentVersion: family.currentVersion, controlsRev: family.controlsRev, zone: store.patientTimeZone)
-                    .onTapGesture { openTab(2) }
+    private var devicesSection: some View {
+        if let family = store.family, !family.activeDisplays.isEmpty {
+            HomeSectionTitle(text: "设备")
+            LazyVGrid(columns: HomeGrid.columns, spacing: 12) {
+                ForEach(family.activeDisplays) { device in
+                    let applied = (device.appliedVersion ?? 0) >= family.currentVersion
+                    let fresh = (device.lastSeenAt?.serverDate).map { Date().timeIntervalSince($0) < 120 } ?? false
+                    let problem = device.report.map { $0.clockSuspect || !$0.missingAssets.isEmpty || !$0.brokenAssets.isEmpty || $0.storageLow } ?? false
+                    Button { openTab(2) } label: {
+                        HomeTile(icon: "ipad.landscape", tint: applied && fresh && !problem ? Theme.badgeBlue : Theme.badgeYellow,
+                                 title: device.name,
+                                 value: !fresh ? "状态未知 · \(device.lastSeenAt?.serverDate.relativeChinese ?? "从未联系")" :
+                                     (problem ? "需要查看" : (applied ? "已应用第 \(device.appliedVersion ?? 0) 版" : "仍在显示旧版本")),
+                                 active: fresh)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }
 
     @ViewBuilder
     private var upcoming: some View {
-        let events = (store.publishedSnapshot?.events ?? []).filter { !$0.isCancelled && $0.showUntil > now }.prefix(3)
+        let events = (store.publishedSnapshot?.effectiveEvents(around: now) ?? [])
+            .filter { !$0.isCancelled && $0.showUntil > now }.sorted { $0.start < $1.start }.prefix(4)
         if !events.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("接下来已发布的安排").font(.headline)
+            HomeSectionTitle(text: "接下来")
+            LazyVGrid(columns: HomeGrid.columns, spacing: 12) {
                 ForEach(Array(events)) { event in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(event.line).font(.body.weight(.semibold))
-                        Text("\(event.start.formatted(in: store.patientTimeZone)) · 显示至 \(event.showUntil.formatted(in: store.patientTimeZone, "HH:mm"))")
-                            .font(.footnote).foregroundStyle(.secondary)
+                    Button { openTab(1) } label: {
+                        HomeTile(icon: event.id.contains("@") ? "repeat" : "calendar", tint: Theme.badgeYellow, title: event.line,
+                                 value: "\(event.start.formatted(in: store.patientTimeZone, "M月d日 HH:mm")) · 至 \(event.showUntil.formatted(in: store.patientTimeZone, "HH:mm"))")
                     }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .tile()
         }
     }
 }
@@ -237,27 +311,34 @@ struct DeviceStatusTile: View {
     }
 }
 
-struct ControlsCard: View {
+/// Pause controls as Home accessory tiles: tap to switch, the tile shows the current state.
+struct ControlTiles: View {
     @Bindable var store: CaregiverStore
 
     var body: some View {
         let controls = store.family?.controls ?? .init()
-        VStack(alignment: .leading, spacing: 10) {
-            Text("暂停").font(.headline)
-            Toggle("暂停患者设备的声音", isOn: Binding(get: { controls.soundPaused }, set: { value in
-                Task { await store.setControls(DeviceControls(soundPaused: value, displayPaused: controls.displayPaused)) }
-            }))
-            .accessibilityIdentifier("controls.sound")
-            Toggle("暂停展示（只显示时间）", isOn: Binding(get: { controls.displayPaused }, set: { value in
-                Task { await store.setControls(DeviceControls(soundPaused: controls.soundPaused, displayPaused: value)) }
-            }))
-            .accessibilityIdentifier("controls.display")
-            if let error = store.actionError { Text(error).font(.footnote).foregroundStyle(Theme.bad) }
-            Text("暂停立即生效，不需要重新发布内容。患者在屏幕上点“停止”随时可以停止声音。")
-                .font(.footnote).foregroundStyle(.secondary)
+        let pending = (store.family?.activeDisplays ?? []).contains { ($0.appliedControlsRev ?? 0) < (store.family?.controlsRev ?? 0) }
+        Button {
+            Task { await store.setControls(DeviceControls(soundPaused: !controls.soundPaused, displayPaused: controls.displayPaused)) }
+        } label: {
+            HomeTile(icon: controls.soundPaused ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                     tint: controls.soundPaused ? Theme.badgeYellow : Theme.badgeBlue, title: "患者设备声音",
+                     value: (controls.soundPaused ? "已暂停" : "开启") + (pending ? " · 等待设备" : ""), active: !controls.soundPaused)
         }
-        .padding(14)
-        .tile()
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("controls.sound")
+        .accessibilityValue(controls.soundPaused ? "已暂停" : "开启")
+        Button {
+            Task { await store.setControls(DeviceControls(soundPaused: controls.soundPaused, displayPaused: !controls.displayPaused)) }
+        } label: {
+            HomeTile(icon: controls.displayPaused ? "pause.rectangle.fill" : "rectangle.inset.filled",
+                     tint: controls.displayPaused ? Theme.badgeYellow : Theme.badgeBlue, title: "患者屏幕展示",
+                     value: (controls.displayPaused ? "已暂停 · 只显示时间" : "开启") + (pending ? " · 等待设备" : ""),
+                     active: !controls.displayPaused)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("controls.display")
+        .accessibilityValue(controls.displayPaused ? "已暂停" : "开启")
     }
 }
 
@@ -272,7 +353,10 @@ struct SetupChecklist: View {
         let applied: Bool = { if case .applied = store.deliveryStatus { return true }; return false }()
         if !(published && paired && applied && checkedInPerson) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("完成首次设置").font(.headline)
+                HStack(spacing: 8) {
+                    GlassBadge(systemName: "list.bullet", tint: Theme.badgeYellow, size: 28)
+                    Text("完成首次设置").font(.headline)
+                }
                 row(store.hasUnpublishedChanges || published, "添加一条真实安排（可选照片和录音）", tab: 1)
                 row(published, "预览并发布", tab: 1)
                 row(paired, "连接患者设备", tab: 2)

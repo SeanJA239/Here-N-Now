@@ -67,7 +67,7 @@ struct WipedNeutralView: View {
             .overlay(alignment: .bottomTrailing) {
                 Button("设置此设备") { model.clearWipedNotice() }
                     .font(.footnote)
-                    .foregroundStyle(Color(hex: PatientPalette.of(moment.palette).secondaryTimeText).opacity(0.8))
+                    .foregroundStyle(moment.isNight ? Color(hex: 0xC9C9BC) : Theme.badgeInk)
                     .padding(24)
             }
             .statusBarHidden()
@@ -85,21 +85,22 @@ struct WelcomeView: View {
     }
 
     var body: some View {
-        ZStack {
-            Theme.wallpaper
-            ScrollView {
+        ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("此刻锚点").font(.largeTitle.bold())
                         Text("用照护者确认过的少量信息，在熟悉的屏幕上温和地提示现在和接下来。")
                             .font(.title3)
-                            .foregroundStyle(.secondary)
+                            .opacity(0.85)
                     }
+                    .foregroundStyle(.white)
                     .padding(.top, 40)
-                    choice("person.crop.circle.badge.plus", "我是照护者", "创建家庭，在这台设备上管理内容", .createFamily)
-                    choice("ipad.landscape", "这台设备给患者看", "输入照护者手机上的配对码", .pairDisplay)
-                    choice("person.2.wave.2.fill", "我是家人：提供录音或照片", "输入主要照护者给你的邀请码", .joinAsFamily)
-                    choice("key.fill", "用恢复码找回管理权", "换了手机或原设备丢失时使用", .recover)
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                        choice("person.crop.circle.badge.plus", "我是照护者", "创建家庭，管理内容", .createFamily, Theme.badgeYellow)
+                        choice("ipad.landscape", "给患者看", "输入配对码", .pairDisplay, Theme.badgeBlue)
+                        choice("person.2.wave.2.fill", "我是家人", "提供录音或照片", .joinAsFamily, Theme.badgeBlue)
+                        choice("key.fill", "找回管理权", "用恢复码", .recover, Theme.badgeYellow)
+                    }
                     Text("本应用不提供医疗、用药或安全监测功能，不能代替照护者的陪伴与判断。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -108,9 +109,9 @@ struct WelcomeView: View {
                 .padding(24)
                 .frame(maxWidth: 640)
                 .frame(maxWidth: .infinity)
-            }
+                .forestPage(solid: 160, fade: 220)
         }
-        .environment(\.colorScheme, .dark)
+        .background(Theme.pageBase)
         .fullScreenCover(item: $route) { route in
             switch route {
             case .createFamily: CaregiverOnboardingView { self.route = nil }
@@ -121,23 +122,18 @@ struct WelcomeView: View {
         }
     }
 
-    private func choice(_ icon: String, _ title: String, _ detail: String, _ target: Route) -> some View {
+    private func choice(_ icon: String, _ title: String, _ detail: String, _ target: Route, _ tint: Color) -> some View {
         Button { route = target } label: {
-            HStack(spacing: 16) {
-                Image(systemName: icon)
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(Theme.badgeInk)
-                    .frame(width: 52, height: 52)
-                    .background(Circle().fill(target == .recover ? Theme.badgeBlue : Theme.badgeYellow))
-                VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 14) {
+                GlassBadge(systemName: icon, tint: tint, size: 48)
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline).foregroundStyle(.primary)
                     Text(detail).font(.subheadline).foregroundStyle(.secondary)
                 }
-                Spacer()
-                Image(systemName: "chevron.right").foregroundStyle(.secondary)
             }
-            .padding(18)
-            .tile(cornerRadius: 22)
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
+            .tile(cornerRadius: 24)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("welcome.\(target)")
@@ -280,9 +276,13 @@ struct PINPad<Footer: View>: View {
     var body: some View {
         ZStack {
             Theme.wallpaper
-            VStack(spacing: 24) {
-                Text(title).font(.largeTitle.bold())
-                Text(subtitle).font(.title3).foregroundStyle(.secondary)
+            VStack(spacing: 20) {
+                VStack(spacing: 6) {
+                    Text(title).font(.largeTitle.bold())
+                    Text(subtitle).font(.title3).opacity(0.85).multilineTextAlignment(.center)
+                }
+                .foregroundStyle(.white)
+                VStack(spacing: 20) {
                 HStack(spacing: 16) {
                     ForEach(0..<6, id: \.self) { index in
                         Circle()
@@ -310,8 +310,7 @@ struct PINPad<Footer: View>: View {
                                 Text(key)
                                     .font(.title.weight(.medium))
                                     .frame(width: 88, height: 88)
-                                    .background(Circle().fill(Theme.tileFill))
-                                    .environment(\.colorScheme, .light)
+                                    .background(Circle().fill(Theme.pageBase))
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(key == "⌫" ? "删除" : key)
@@ -320,9 +319,11 @@ struct PINPad<Footer: View>: View {
                     }
                 }
                 footer()
+                }
+                .padding(28)
+                .tile(cornerRadius: 32)
             }
-            .padding(32)
+            .padding(24)
         }
-        .environment(\.colorScheme, .dark)
     }
 }

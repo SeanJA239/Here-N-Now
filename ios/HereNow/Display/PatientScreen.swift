@@ -14,9 +14,14 @@ struct PatientMomentView: View {
             let scale = moment.textScale
             let cardWidth = PatientLayout.cardWidth(for: proxy.size)
             ZStack {
-                LinearGradient(colors: [Color(hex: palette.backgroundTop), Color(hex: palette.backgroundBottom)],
-                               startPoint: .top, endPoint: .bottom)
-                    .ignoresSafeArea()
+                ZStack {
+                    Color(hex: palette.base)
+                    LinearGradient(stops: [.init(color: Color(hex: palette.backgroundTop), location: 0),
+                                           .init(color: Color(hex: palette.backgroundBottom), location: PatientPalette.solidUntil),
+                                           .init(color: Color(hex: palette.backgroundBottom, opacity: 0), location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+                .ignoresSafeArea()
                 // Time and card form one centered block; the card keeps the same height with or without a photo,
                 // so the button never moves when content changes.
                 VStack(spacing: 0) {
@@ -83,7 +88,7 @@ struct PatientMomentView: View {
         .background(
             RoundedRectangle(cornerRadius: 40, style: .continuous)
                 .fill(Color(hex: palette.card))
-                .shadow(color: .black.opacity(moment.isNight ? 0 : 0.10), radius: 24, y: 10)
+                .shadow(color: .black.opacity(moment.isNight ? 0 : 0.14), radius: 24, y: 10)
         )
     }
 
@@ -132,7 +137,7 @@ struct PatientScreen: View {
                 onToggle: engine.toggleSound
             )
             .overlay(alignment: .topTrailing) {
-                CaregiverEntryButton(dark: engine.moment.palette != .day, action: onCaregiverEntry)
+                CaregiverEntryButton(dark: true, action: onCaregiverEntry)
                     .padding(12)
             }
             .onAppear { engine.updateLayout(size: proxy.size) }

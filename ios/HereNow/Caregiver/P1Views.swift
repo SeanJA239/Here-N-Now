@@ -267,34 +267,21 @@ struct ComfortEditor: View {
     }
 }
 
-/// Dashboard card: start a published comfort item on the patient screen, or stop it.
-struct ComfortControlCard: View {
+/// Comfort items as Home accessory tiles: tap to play on the patient screen, tap again to stop.
+struct ComfortTiles: View {
     @Bindable var store: CaregiverStore
 
     var body: some View {
         let items = (store.publishedSnapshot?.comfortItems ?? []).filter(\.enabled)
         let active = store.family?.controls.comfortItemID
-        if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("安抚内容").font(.headline)
-                ForEach(items) { item in
-                    HStack {
-                        Label(item.title, systemImage: active == item.id ? "speaker.wave.2.fill" : "heart")
-                        Spacer()
-                        if active == item.id {
-                            Button("停止") { Task { await store.startComfort(nil) } }.buttonStyle(.bordered)
-                        } else {
-                            Button("播放") { Task { await store.startComfort(item.id) } }
-                                .buttonStyle(.borderedProminent)
-                                .accessibilityIdentifier("comfort.play.\(item.title)")
-                        }
-                    }
-                }
-                Text("请在患者身边时使用，观察是否让本人舒服。设备离线超过 2 分钟后才收到的请求不会播放。患者点“停止”随时可以结束。")
-                    .font(.footnote).foregroundStyle(.secondary)
+        ForEach(items) { item in
+            let playing = active == item.id
+            Button { Task { await store.startComfort(playing ? nil : item.id) } } label: {
+                HomeTile(icon: playing ? "speaker.wave.2.fill" : "heart.fill", tint: playing ? Theme.badgeYellow : Theme.badgeBlue,
+                         title: item.title, value: playing ? "播放中 · 点按停止" : "安抚内容 · 点按播放", active: playing)
             }
-            .padding(14)
-            .tile()
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("comfort.play.\(item.title)")
         }
     }
 }
@@ -417,7 +404,10 @@ struct ProposalsCard: View {
         let proposals = store.pendingProposals
         if !proposals.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text("家人提交（\(proposals.count)）").font(.headline)
+                HStack(spacing: 8) {
+                    GlassBadge(systemName: "tray.and.arrow.down", tint: Theme.badgeYellow, size: 28)
+                    Text("家人提交（\(proposals.count)）").font(.headline)
+                }
                 ForEach(proposals) { proposal in
                     VStack(alignment: .leading, spacing: 6) {
                         Text("\(proposal.deviceName) · \(title(proposal))").font(.subheadline.weight(.semibold))
